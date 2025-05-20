@@ -1,0 +1,14 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN")
+CONFLUENCE_USER = os.getenv("CONFLUENCE_USER")
+CONFLUENCE_BASE_URL = os.getenv("CONFLUENCE_BASE_URL")
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma")
+CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "chroma_db")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
