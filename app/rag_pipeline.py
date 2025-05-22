@@ -1,6 +1,7 @@
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain.chat_models import ChatOpenAI
+# from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from app.embedding_store import get_vectorstore
 from app.confluence_loader import get_page_content_by_id
 

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routes import health, analyze, loader
+from app.routes import health, analyze, loader
 import logging
 logging.basicConfig(level=logging.INFO)
 

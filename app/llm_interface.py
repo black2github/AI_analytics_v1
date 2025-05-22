@@ -3,20 +3,18 @@
 import os
 from langchain.chat_models import ChatOpenAI
 from langchain.embeddings.openai import OpenAIEmbeddings
+from app.config import OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE
 
 
 def get_llm():
-    model_name = os.getenv("LLM_MODEL", "gpt-4")
-    temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-
     return ChatOpenAI(
-        model_name=model_name,
-        temperature=temperature,
-        openai_api_key=os.getenv("OPENAI_API_KEY")
+        model_name=LLM_MODEL,
+        temperature=float(LLM_TEMPERATURE),
+        openai_api_key=OPENAI_API_KEY
     )
 
 
 def get_embeddings_model():
     return OpenAIEmbeddings(
-        openai_api_key=os.getenv("OPENAI_API_KEY")
+        openai_api_key=OPENAI_API_KEY
     )

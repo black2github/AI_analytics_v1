@@ -1,29 +1,20 @@
-version: "3.8"
-
 services:
-  app:
-    build: .
-    ports:
-      - "8000:8000"
-    container_name: rag-service
-    restart: always
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
-      - CONFLUENCE_USER=${CONFLUENCE_USER}
-      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
-      - CONFLUENCE_BASE_URL=${CONFLUENCE_BASE_URL}
-      - CHROMA_PATH=/app/chroma_db
+  fastapi-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-services
+    restart: unless-stopped
     volumes:
       - ./app:/app
-      - ./entrypoint.sh:/entrypoint.sh
-      - ./wireguard:/etc/wireguard
-    entrypoint: ["/entrypoint.sh"]
+    ports:
+      - "8000:8000"
     extra_hosts:
       - "confluence.gboteam.ru:192.168.3.11"
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
+    network_mode: host  # Используем сетевой стек хоста
+    environment:
+      - PYTHONPATH=/
+    env_file:
+      - .env
+
 
