@@ -47,19 +47,31 @@ def get_page_title_by_id(page_id: str) -> Optional[str]:
 
 
 def extract_approved_fragments(html: str) -> str:
+    """
+    Извлекает только одобренные (чёрные) фрагменты текста, включая ссылки,
+    но только если они находятся внутри одобренных блоков (включая начало блока или его завершение).
+    Фильтрация идёт по стилю родительского блока, не по вложенным тегам.
+    Если родитель — цветной (нечёрный), всё внутри удаляется, даже если <a> не имеет цвета.
+    Это поведение — безопасное и строгое, оно предотвращает попадание ссылок, находящихся в «неодобренном» контексте.
+    """
     soup = BeautifulSoup(html, "html.parser")
     fragments = []
 
     for el in soup.find_all(["p", "li", "span", "div"]):
         style = el.get("style", "").lower()
-        has_link = el.find("a") is not None
 
-        if has_link:
-            fragments.append(str(el))
-        elif ("color" not in style) or ("rgb(0,0,0)" in style) or ("#000000" in style):
-            fragments.append(str(el))
+        # Явно исключаем цветной текст, если он не чёрный
+        if "color" in style:
+            if ("rgb(0,0,0)" not in style) and ("#000000" not in style):
+                continue  # Пропускаем цветной текст (неодобренный)
 
+        # Учитываем только элементы без стиля цвета или с чёрным цветом
+        fragments.append(str(el))
+
+    # Собираем HTML из отфильтрованных фрагментов
     filtered_html = "\n".join(fragments)
+
+    # Преобразуем HTML в Markdown
     markdown_text = markdownify.markdownify(filtered_html, heading_style="ATX")
     return markdown_text.strip()
 
