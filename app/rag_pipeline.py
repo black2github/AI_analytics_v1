@@ -1,7 +1,12 @@
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+# from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
+# from langchain.chains import LLMChain
+from langchain.chains.llm import LLMChain
 # from langchain.chat_models import ChatOpenAI
-from langchain_community.chat_models import ChatOpenAI
+# from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
+
+from app.config import LLM_TEMPERATURE
 from app.embedding_store import get_vectorstore
 from app.confluence_loader import get_page_content_by_id
 
@@ -22,7 +27,7 @@ prompt_template = PromptTemplate(
 )
 
 # Инициализация LLMChain
-llm = ChatOpenAI(temperature=0.2)
+llm = ChatOpenAI(temperature=float(LLM_TEMPERATURE))
 chain = LLMChain(llm=llm, prompt=prompt_template)
 
 

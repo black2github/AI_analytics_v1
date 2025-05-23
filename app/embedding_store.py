@@ -1,8 +1,6 @@
-# app/embedding_store.py
+# embedding_store.py
 
-# from langchain.vectorstores import Chroma
-from langchain_community.vectorstores import Chroma
-# from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_chroma import Chroma  # вместо langchain_community
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_core.embeddings import Embeddings
 from app.config import CHROMA_PERSIST_DIR
