@@ -1,8 +1,6 @@
 # app/llm_interface.py
 
-import os
 from langchain.chat_models import ChatOpenAI
-#from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain_community.embeddings import OpenAIEmbeddings
 from app.config import OPENAI_API_KEY, LLM_MODEL, LLM_TEMPERATURE
 

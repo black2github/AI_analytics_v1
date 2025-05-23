@@ -1,8 +1,10 @@
+# app/routes/loader.py
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List
 from app.confluence_loader import load_pages_by_ids
-from app.embedding_store import get_vectorstore
+from app.embedding_store import get_vectorstore, prepare_documents_for_index
 from app.llm_interface import get_embeddings_model
 import logging
 
@@ -21,7 +23,7 @@ def _load_and_replace(collection_name: str, page_ids: List[str], log_context: st
         return {"message": "No pages loaded."}
 
     embeddings_model = get_embeddings_model()
-    store = get_vectorstore(collection_name=collection_name)
+    store = get_vectorstore(collection_name=collection_name, embedding_model=embeddings_model)
 
     # Удаляем существующие записи по page_ids
     try:
@@ -29,12 +31,9 @@ def _load_and_replace(collection_name: str, page_ids: List[str], log_context: st
     except Exception as e:
         logger.warning(f"Could not delete existing vectors in {collection_name}: {e}")
 
-    store.add_texts(
-        texts=[p["content"] for p in pages],
-        metadatas=[{"title": p["title"], "id": p["id"]} for p in pages],
-        ids=[p["id"] for p in pages],
-        embeddings=embeddings_model
-    )
+    # Сохраняем одобренные требования.
+    docs = prepare_documents_for_index(pages)
+    store.add_documents(docs)
     return {"message": f"{len(pages)} {log_context} pages added to vector store."}
 
 
