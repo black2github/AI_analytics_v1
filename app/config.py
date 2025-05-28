@@ -13,7 +13,7 @@ CONFLUENCE_BASE_URL = os.getenv("CONFLUENCE_BASE_URL")
 CONFLUENCE_PASSWORD = os.getenv("CONFLUENCE_PASSWORD")
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma")
 CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "chroma_db")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")
 LLM_TEMPERATURE = os.getenv("LLM_TEMPERATURE", "0.2")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 

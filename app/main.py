@@ -1,13 +1,28 @@
-# app/main.py
+# app/maim.py
 
 from fastapi import FastAPI
-from app.routes import health, analyze, loader
-import logging
-logging.basicConfig(level=logging.INFO)
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Requirements RAG Analyzer")
+from app.routes import analyze, loader, info, services, health
 
-app.include_router(health.router)
+app = FastAPI(
+    title="AI Requirements Analyzer",
+    description="Анализ и проверка требований на основе контекста и шаблонов",
+    version="1.0.0",
+)
+
+# CORS (если необходимо)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Подключение всех маршрутов
 app.include_router(analyze.router)
 app.include_router(loader.router)
+app.include_router(services.router)
+app.include_router(health.router)
+app.include_router(info.router)
 

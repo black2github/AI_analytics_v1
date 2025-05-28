@@ -1,0 +1,37 @@
+[
+  {
+    "code": "UAA",
+    "name": "[UAA] Сервис аутентификации и авторизации",
+    "platform": true
+  },
+  {
+    "code": "userProfile",
+    "name": "[Профиль] Сервис по работе с профилем пользователя",
+    "platform": true
+  },
+  {
+    "code": "clientDirectory",
+    "name": "[Клиент] Справочник Клиентов Банка",
+    "platform": true
+  },
+  {
+    "code": "bankBranchDirectory",
+    "name": "[Подразделение] Справочник филиалов и подразделений",
+    "platform": true
+  },
+  {
+    "code": "SBP",
+    "name": "[СБП] Система быстрых платежей",
+    "platform": false
+  },
+  {
+    "code": "contractorVerification",
+    "name": "[Контрагенты] Сервис проверки контрагентов",
+    "platform": false
+  },
+  {
+    "code": "CC",
+    "name": "[КК] Корпоративные Карты",
+    "platform": false
+  }
+]

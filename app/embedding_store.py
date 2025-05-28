@@ -3,14 +3,13 @@
 from langchain_chroma import Chroma
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_core.embeddings import Embeddings
-from app.config import CHROMA_PERSIST_DIR
 from langchain_core.documents import Document
+from app.config import CHROMA_PERSIST_DIR
 
 
 def get_vectorstore(collection_name: str, embedding_model: Embeddings = None) -> Chroma:
     if embedding_model is None:
         embedding_model = OpenAIEmbeddings()
-
     return Chroma(
         collection_name=collection_name,
         embedding_function=embedding_model,
@@ -18,13 +17,14 @@ def get_vectorstore(collection_name: str, embedding_model: Embeddings = None) ->
     )
 
 
-# Метод для централизованного управления (дальнейшего расширения) логики метаданных, такой как
-# форматирования, chunking и пр.
-def prepare_documents_for_index(pages: list) -> list:
-    """
-    Извлекает только одобренные требования для индексации.
-    """
-    documents = []
+def prepare_documents_for_index(
+    pages: list,
+    service_code: str | None = None,
+    source: str = "confluence",
+    doc_type: str = "requirement",
+    enrich_with_type: bool = False
+) -> list[Document]:
+    docs = []
     for page in pages:
         content = page.get("approved_content")
         if not content:
@@ -33,10 +33,15 @@ def prepare_documents_for_index(pages: list) -> list:
         metadata = {
             "page_id": page["id"],
             "title": page["title"],
+            "source": source,
+            "type": doc_type,
         }
 
+        if service_code:
+            metadata["service_code"] = service_code
+        if enrich_with_type and "title" in page:
+            metadata["requirement_type"] = page["title"].replace("Template: ", "").strip()
+
         doc = Document(page_content=content, metadata=metadata)
-        documents.append(doc)
-
-    return documents
-
+        docs.append(doc)
+    return docs
