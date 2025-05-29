@@ -36,8 +36,9 @@ async def load_service_pages(payload: LoadRequest):
         if not pages:
             return {"error": "No pages found."}
 
-        embeddings_model = get_embeddings_model()
-        store = get_vectorstore(collection_name, embedding_model=embeddings_model)
+        # embeddings_model = get_embeddings_model()
+        # store = get_vectorstore(collection_name, embedding_model=embeddings_model)
+        store = get_vectorstore(collection_name)
 
         try:
             store.delete(ids=[p["id"] for p in pages])

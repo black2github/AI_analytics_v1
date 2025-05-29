@@ -1,5 +1,5 @@
 # app/rag_pipeline.py
-
+import logging
 from typing import Optional, List, Dict, Any
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
@@ -29,6 +29,7 @@ default_prompt_template = PromptTemplate(
 )
 
 llm = get_llm()
+logger = logging.getLogger(__name__)
 
 
 def build_chain(prompt_template: Optional[str]) -> LLMChain:
@@ -48,9 +49,11 @@ def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = Non
     if exclude_page_ids:
         filters["page_id"] = {"$nin": exclude_page_ids}
 
-    embeddings_model = get_embeddings_model()
-    service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
-    platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+    # embeddings_model = get_embeddings_model()
+    # service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
+    # platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+    service_store = get_vectorstore("service_pages")
+    platform_store = get_vectorstore("platform_context")
 
     service_docs = service_store.similarity_search("", filter=filters)
     platform_services = get_platform_services()
@@ -69,8 +72,11 @@ def analyze_text(text: str, prompt_template: Optional[str] = None, service_code:
     if not service_code:
         service_code = resolve_service_code_by_user()
 
+    logger.info(f"[rag_pipeline] point 1")
     chain = build_chain(prompt_template)
+    logger.info(f"[rag_pipeline] point 2")
     context = build_context(service_code)
+    logger.info(f"[rag_pipeline]: {text}, service code: {service_code}")
     return chain.run({"requirement": text, "context": context})
 
 

@@ -25,8 +25,9 @@ def store_templates(templates: dict[str, str]) -> int:
     :param templates: Словарь {requirement_type: page_id}
     :return: Количество успешно сохранённых шаблонов
     """
-    embeddings_model = get_embeddings_model()
-    store = get_vectorstore("requirement_templates", embedding_model=embeddings_model)
+    # embeddings_model = get_embeddings_model()
+    # store = get_vectorstore("requirement_templates", embedding_model=embeddings_model)
+    store = get_vectorstore("requirement_templates")
     docs_to_store = []
 
     for requirement_type, page_id in templates.items():

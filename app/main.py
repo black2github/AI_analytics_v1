@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.embedding_store import get_embedding_model
 from app.routes import analyze, loader, info, services, health
 
 app = FastAPI(
@@ -26,3 +27,5 @@ app.include_router(services.router)
 app.include_router(health.router)
 app.include_router(info.router)
 
+# для отладки
+get_embedding_model()
