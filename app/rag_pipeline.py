@@ -16,7 +16,6 @@ from app.service_registry import (
 from app.template_registry import get_template_by_type
 
 llm = get_llm()
-logger = logging.getLogger(__name__)
 
 def build_chain(prompt_template: Optional[str]) -> LLMChain:
     if prompt_template:
@@ -25,7 +24,7 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
             template=prompt_template
         )
     else:
-        with open("prompt_template.txt", "r", encoding="utf-8") as file:
+        with open("page_prompt_template.txt", "r", encoding="utf-8") as file:
            template = file.read()
         template = template
         prompt = PromptTemplate(
@@ -36,28 +35,36 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
 
 
 def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = None):
-    filters: Dict[str, Any] = {"service_code": service_code}
+    # Фильтр для отбора всех фрагментов требований, относящихся к сервису, за исключением фрагментов,
+    # созданных из страниц, идентификаторы которых переданы в качестве аргументов.
+    # Формируем составной фильтр
+    filters = {
+        "$and": [
+            {"service_code": {"$eq": service_code}}
+        ]
+    }
     if exclude_page_ids:
-        filters["page_id"] = {"$nin": exclude_page_ids}
+        filters["$and"].append({"page_id": {"$nin": exclude_page_ids}})
 
     # Распечатка filters в текстовом виде
-    print("Filters:", json.dumps(filters, indent=2, ensure_ascii=False))
+    logging.info("Filters: %s", json.dumps(filters, indent=2, ensure_ascii=False))
 
     embeddings_model = get_embeddings_model()
+
     service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
-    platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
-    # service_store = get_vectorstore("service_pages")
-    # platform_store = get_vectorstore("platform_context")
-
+    # Выборка по фильтру всех релевантных фрагментов требований сервиса
     service_docs = service_store.similarity_search("", filter=filters)
-    platform_services = get_platform_services()
-    platform_docs = []
 
+    platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+    platform_docs = []
+    platform_services = get_platform_services()
     for plat in platform_services:
         plat_store = platform_store
+        # Выборка по фильтру всех релевантных фрагментов требований платформенных сервисов
         plat_docs = plat_store.similarity_search("", filter={"service_code": plat["code"]})
         platform_docs.extend(plat_docs)
 
+    # Создание общего контекста
     docs = platform_docs + service_docs
     return "\n\n".join([d.page_content for d in docs])
 
@@ -66,29 +73,67 @@ def analyze_text(text: str, prompt_template: Optional[str] = None, service_code:
     if not service_code:
         service_code = resolve_service_code_by_user()
 
-    logger.info(f"[rag_pipeline] point 1")
     chain = build_chain(prompt_template)
-    logger.info(f"[rag_pipeline] point 2")
     context = build_context(service_code)
-    logger.info(f"[rag_pipeline]: {text}, service code: {service_code}")
+    logging.info("[rag_pipeline]: {%s}, service code: %s", text, service_code)
     return chain.run({"requirement": text, "context": context})
 
 
 def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, service_code: Optional[str] = None):
+    """Анализирует все страницы требований вместе, учитывая общий контекст.
+
+    Args:
+        page_ids: Список ID страниц для анализа.
+        prompt_template: Шаблон промпта (если None, используется дефолтный).
+        service_code: Код сервиса (если None, определяется автоматически).
+
+    Returns:
+        Список результатов анализа для каждой страницы в формате:
+        [{"page_id": "id1", "analysis": "текст анализа"}, ...]
+    """
     # Определение service_code, если не передан
     if not service_code:
         service_code = resolve_service_code_from_pages_or_user(page_ids)
 
-    results = []
+    # Сбор содержимого всех страниц
+    requirements = []
+    valid_page_ids = []
     for page_id in page_ids:
         content = get_page_content_by_id(page_id, clean_html=True)
-        if not content:
-            continue
+        if content:
+            requirements.append(content)
+            valid_page_ids.append(page_id)
 
-        chain = build_chain(prompt_template)
-        context = build_context(service_code, exclude_page_ids=[page_id])
-        result = chain.run({"requirement": content, "context": context})
-        results.append({"page_id": page_id, "analysis": result})
+    # Если нет валидного содержимого, вернуть пустой результат
+    if not requirements:
+        return []
+
+    # Объединяем содержимое всех страниц в один текст
+    combined_requirements = "\n\n".join(requirements)
+
+    # Формируем контекст, исключая все переданные page_ids
+    context = build_context(service_code, exclude_page_ids=page_ids)
+
+    logging.info("Combined requirements: %s", combined_requirements)
+    logging.info("Context: %s", context)
+
+    # Создаем цепочку
+    chain = build_chain(prompt_template)
+
+    # Выполняем анализ всех требований одновременно
+    result = chain.run({"requirement": combined_requirements, "context": context})
+
+    # Формируем результат, привязывая анализ к page_ids
+    # Предполагаем, что результат анализа применим ко всем страницам
+    # results = [{"page_id": page_id, "analysis": result} for page_id in valid_page_ids]
+
+    # Разделяем результат анализа по страницам
+    # Парсим, предполагая, что ИИ возвращает структурированный ответ.
+    try:
+        parsed_result = json.loads(result)
+        results = [{"page_id": page_id, "analysis": parsed_result.get(page_id, result)} for page_id in valid_page_ids]
+    except json.JSONDecodeError:
+        results = [{"page_id": page_id, "analysis": result} for page_id in valid_page_ids]
 
     return results
 

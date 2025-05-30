@@ -2,14 +2,10 @@
 
 import logging
 from langchain_chroma import Chroma
-# from langchain_community.embeddings import OpenAIEmbeddings
-# from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
-from app.config import CHROMA_PERSIST_DIR, EMBEDDING_MODEL
-
-logger = logging.getLogger(__name__)
+from app.config import CHROMA_PERSIST_DIR, EMBEDDING_MODEL, EMBEDDING_PROVIDER, OPENAI_API_KEY
 
 
 def get_vectorstore(collection_name: str, embedding_model: Embeddings = None) -> Chroma:
@@ -53,14 +49,16 @@ def prepare_documents_for_index(
 
 # Вспомогательная функция — получает размерность эмбеддингов
 def get_embedding_model(name: str = EMBEDDING_MODEL) -> Embeddings:
-    if "openai" in name.lower():
-        # model = OpenAIEmbeddings()
+    if EMBEDDING_PROVIDER == "openai":
+        from langchain_community.embeddings import OpenAIEmbeddings
+        model = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
         dim = 1536  # фиксировано
-    else:
-        model = HuggingFaceEmbeddings(model_name=name)
+    elif EMBEDDING_PROVIDER == "huggingface":
+        from langchain_huggingface import HuggingFaceEmbeddings
+        model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
         # Получаем пример эмбеддинга, чтобы узнать размерность
         test = model.embed_query("test")
         dim = len(test)
 
-    logger.info(f"[embedding_store] Using embedding model: {name}, dimension: {dim}")
+    logging.info("[embedding_store] Using embedding model: {%s}, dimension: {%s}", name, dim)
     return model

@@ -1,18 +1,18 @@
 # app/service_registry.py
 
 import json
+import logging
 import os
 from typing import List, Dict
 
 SERVICE_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "data", "services.json")
-
 
 def load_services() -> List[Dict]:
     try:
         with open(SERVICE_REGISTRY_PATH, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"Ошибка при чтении services.json: {e}")
+        logging.exception("Ошибка при чтении services.json: {%s}", e)
         return []
 
 

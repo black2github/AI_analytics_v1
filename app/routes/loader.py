@@ -11,8 +11,6 @@ from app.template_registry import store_templates
 import logging
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
-
 
 class LoadRequest(BaseModel):
     page_ids: List[str]
@@ -36,21 +34,21 @@ async def load_service_pages(payload: LoadRequest):
         if not pages:
             return {"error": "No pages found."}
 
-        # embeddings_model = get_embeddings_model()
-        # store = get_vectorstore(collection_name, embedding_model=embeddings_model)
-        store = get_vectorstore(collection_name)
+        embeddings_model = get_embeddings_model()
+        store = get_vectorstore(collection_name, embedding_model=embeddings_model)
+        # store = get_vectorstore(collection_name)
 
         try:
             store.delete(ids=[p["id"] for p in pages])
         except Exception as e:
-            logger.warning(f"Could not delete existing vectors: {e}")
+            logging.warning("Could not delete existing vectors: {%s}", e)
 
         docs = prepare_documents_for_index(pages, service_code=service_code, source="confluence", doc_type="requirement")
         store.add_documents(docs)
 
         return {"message": f"{len(docs)} documents indexed for service '{service_code}'."}
     except Exception as e:
-        logger.exception("Error in /load_pages")
+        logging.exception("Error in /load_pages")
         return {"error": str(e)}
 
 
@@ -60,5 +58,5 @@ async def load_templates(payload: TemplateLoadRequest):
         result = store_templates(payload.templates)
         return {"message": f"Templates loaded: {result}"}
     except Exception as e:
-        logger.exception("Error in /load_templates")
+        logging.exception("Error in /load_templates")
         return {"error": str(e)}

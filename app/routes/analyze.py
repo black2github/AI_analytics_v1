@@ -9,8 +9,6 @@ from app.rag_pipeline import analyze_text, analyze_pages, analyze_with_templates
 from app.service_registry import is_valid_service
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
-
 
 class AnalyzeTextRequest(BaseModel):
     text: str
@@ -45,7 +43,7 @@ async def analyze_from_text(payload: AnalyzeTextRequest):
         )
         return {"result": result}
     except Exception as e:
-        logger.exception("Ошибка в /analyze")
+        logging.exception("Ошибка в /analyze")
         return {"error": str(e)}
 
 
@@ -59,7 +57,7 @@ async def analyze_service_pages(payload: AnalyzePagesRequest):
         )
         return {"results": result}
     except Exception as e:
-        logger.exception("Ошибка в /analyze_pages")
+        logging.exception("Ошибка в /analyze_pages")
         return {"error": str(e)}
 
 
@@ -76,7 +74,7 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
         )
         return {"results": result}
     except Exception as e:
-        logger.exception("Ошибка в /analyze_service_pages")
+        logging.exception("Ошибка в /analyze_service_pages")
         return {"error": str(e)}
 
 
@@ -90,5 +88,5 @@ async def analyze_with_templates_route(payload: AnalyzeWithTemplatesRequest):
         )
         return {"results": result}
     except Exception as e:
-        logger.exception("Ошибка в /analyze_with_templates")
+        logging.exception("Ошибка в /analyze_with_templates")
         return {"error": str(e)}

@@ -2,9 +2,12 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.embedding_store import get_embedding_model
 from app.routes import analyze, loader, info, services, health
+from app.logging_config import setup_logging
+
+# Инициализация логирования
+setup_logging()
 
 app = FastAPI(
     title="AI Requirements Analyzer",

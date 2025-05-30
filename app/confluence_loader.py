@@ -5,11 +5,7 @@ from typing import List, Dict, Optional
 from atlassian import Confluence
 from bs4 import BeautifulSoup
 import markdownify
-
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 if CONFLUENCE_BASE_URL is None:
     raise ValueError("Переменная окружения CONFLUENCE_BASE_URL не задана")
@@ -19,7 +15,6 @@ confluence = Confluence(
     username=CONFLUENCE_USER,
     password=CONFLUENCE_PASSWORD
 )
-
 
 def extract_approved_fragments(html: str) -> str:
     """
@@ -54,7 +49,7 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
             return markdownify.markdownify(html, heading_style="ATX").strip()
         return html
     except Exception as e:
-        logger.warning(f"Ошибка при получении содержимого страницы {page_id}: {e}")
+        logging.warning("Ошибка при получении содержимого страницы {%s}: {%s}", page_id, e)
         return None
 
 
@@ -63,7 +58,7 @@ def get_page_title_by_id(page_id: str) -> Optional[str]:
         result = confluence.get_page_by_id(page_id, expand='title')
         return result.get("title", "")
     except Exception as e:
-        logger.warning(f"Ошибка при получении заголовка страницы {page_id}: {e}")
+        logging.warning("Ошибка при получении содержимого страницы {%s}: {%s}", page_id, e)
         return None
 
 
@@ -76,7 +71,7 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
         approved_md = extract_approved_fragments(raw_html) if raw_html else None
 
         if not (title and full_md and approved_md):
-            logger.warning(f"Пропущена страница {page_id} из-за ошибок загрузки.")
+            logging.warning("Пропущена страница {%s} из-за ошибок загрузки.", page_id)
             continue
 
         pages.append({
@@ -86,7 +81,7 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
             "approved_content": approved_md
         })
 
-    logger.info(f"Успешно загружено страниц: {len(pages)} из {len(page_ids)}")
+    logging.info("Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
     return pages
 
 
