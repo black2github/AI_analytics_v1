@@ -1,5 +1,7 @@
 # app/rag_pipeline.py
+
 import logging
+import json
 from typing import Optional, List, Dict, Any
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
@@ -13,24 +15,8 @@ from app.service_registry import (
 )
 from app.template_registry import get_template_by_type
 
-# Шаблон промпта по умолчанию
-default_prompt_template = PromptTemplate(
-    input_variables=["requirement", "context"],
-    template="""
-Ты — эксперт по анализу требований. Тебе предоставлены:
-1. Требование: {requirement}
-2. Контекст: {context}
-
-Проанализируй требование и ответь:
-- Какие части контекста необходимо учесть при реализации?
-- Есть ли противоречия?
-- Насколько требование совместимо с текущими платформенными и сервисными ограничениями?
-"""
-)
-
 llm = get_llm()
 logger = logging.getLogger(__name__)
-
 
 def build_chain(prompt_template: Optional[str]) -> LLMChain:
     if prompt_template:
@@ -39,21 +25,29 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
             template=prompt_template
         )
     else:
-        prompt = default_prompt_template
+        with open("prompt_template.txt", "r", encoding="utf-8") as file:
+           template = file.read()
+        template = template
+        prompt = PromptTemplate(
+            input_variables=["requirement", "context"],
+            template=template
+        )
     return LLMChain(llm=llm, prompt=prompt)
 
 
 def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = None):
-
     filters: Dict[str, Any] = {"service_code": service_code}
     if exclude_page_ids:
         filters["page_id"] = {"$nin": exclude_page_ids}
 
-    # embeddings_model = get_embeddings_model()
-    # service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
-    # platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
-    service_store = get_vectorstore("service_pages")
-    platform_store = get_vectorstore("platform_context")
+    # Распечатка filters в текстовом виде
+    print("Filters:", json.dumps(filters, indent=2, ensure_ascii=False))
+
+    embeddings_model = get_embeddings_model()
+    service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
+    platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+    # service_store = get_vectorstore("service_pages")
+    # platform_store = get_vectorstore("platform_context")
 
     service_docs = service_store.similarity_search("", filter=filters)
     platform_services = get_platform_services()
@@ -81,6 +75,7 @@ def analyze_text(text: str, prompt_template: Optional[str] = None, service_code:
 
 
 def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, service_code: Optional[str] = None):
+    # Определение service_code, если не передан
     if not service_code:
         service_code = resolve_service_code_from_pages_or_user(page_ids)
 
