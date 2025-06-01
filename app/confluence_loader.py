@@ -63,6 +63,13 @@ def get_page_title_by_id(page_id: str) -> Optional[str]:
 
 
 def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
+    """
+    Загрузка страниц по идентификаторам и разбиение на идентификатор, заголовок, содержимое и подтвержденное содержимое
+    (текст подтвержденных/черных требований).
+    :param page_ids: список идентификаторов страниц для загрузки.
+    :return:
+    """
+    logging.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
     pages = []
     for page_id in page_ids:
         title = get_page_title_by_id(page_id)
@@ -81,7 +88,7 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
             "approved_content": approved_md
         })
 
-    logging.info("Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
+    logging.info("[load_pages_by_ids] -> Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
     return pages
 
 
@@ -90,3 +97,41 @@ def load_template_markdown(page_id: str) -> Optional[str]:
     if not html:
         return None
     return extract_approved_fragments(html)
+
+
+def get_child_page_ids(page_id: str) -> List[str]:
+    """Возвращает список идентификаторов всех дочерних страниц для указанной страницы Confluence.
+
+    Args:
+        page_id: Идентификатор страницы Confluence.
+
+    Returns:
+        Список идентификаторов дочерних страниц (включая вложенные).
+
+    Raises:
+        Exception: Если доступ к странице невозможен или произошла ошибка API.
+    """
+    child_page_ids = []
+
+    def fetch_children(current_page_id: str):
+        """Рекурсивно собирает идентификаторы дочерних страниц."""
+        logging.debug("[fetch_children] <- current_page_id={%s}", current_page_id)
+        try:
+            # Получение дочерних страниц через Confluence API
+            children = confluence.get_child_pages(current_page_id)
+            for child in children:
+                child_id = child["id"]
+                child_page_ids.append(child_id)
+                logging.debug("[get_child_page_ids] Found child page: %s for parent: %s", child_id, current_page_id)
+                # Рекурсивный вызов для вложенных страниц
+                fetch_children(child_id)
+        except Exception as e:
+            logging.error("Failed to fetch children for page %s: %s", current_page_id, str(e))
+            raise
+
+    try:
+        fetch_children(page_id)
+        return child_page_ids
+    except Exception as e:
+        logging.exception("Error fetching child pages for page_id=%s", page_id)
+        raise
