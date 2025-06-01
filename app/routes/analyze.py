@@ -80,14 +80,16 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
         return {"error": str(e)}
 
 
-@router.post("/analyze_with_templates", tags=["Анализ новых требований конкретного сервиса и их оформления"])
+@router.post("/analyze_with_templates", tags=["Анализ новых требований сервиса и их оформления"])
 async def analyze_with_templates_route(payload: AnalyzeWithTemplatesRequest):
+    logging.info("[analyze_with_templates] <- payload=%s", payload)
     try:
         result = analyze_with_templates(
             items=payload.items,
             prompt_template=payload.prompt_template,
             service_code=payload.service_code
         )
+        logging.info("[analyze_with_templates] -> result={%s}", result)
         return {"results": result}
     except Exception as e:
         logging.exception("Ошибка в /analyze_with_templates")
