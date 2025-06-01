@@ -23,6 +23,7 @@ class TemplateLoadRequest(BaseModel):
 
 @router.post("/load_pages", tags=["Загрузка Confluence страниц требований"])
 async def load_service_pages(payload: LoadRequest):
+    logging.info("[load_service_pages] <- page_ids={%s}, service_code={%s}", payload.page_ids, payload.service_code)
     try:
         service_code = resolve_service_code_from_pages_or_user(payload.page_ids)
         if not service_code:
@@ -36,7 +37,6 @@ async def load_service_pages(payload: LoadRequest):
 
         embeddings_model = get_embeddings_model()
         store = get_vectorstore(collection_name, embedding_model=embeddings_model)
-        # store = get_vectorstore(collection_name)
 
         try:
             store.delete(ids=[p["id"] for p in pages])
@@ -54,8 +54,10 @@ async def load_service_pages(payload: LoadRequest):
 
 @router.post("/load_templates", tags=["Загрузка Confluence шаблонов страниц требований"])
 async def load_templates(payload: TemplateLoadRequest):
+    logging.info("load_templates <- dict={%s}", payload.templates)
     try:
         result = store_templates(payload.templates)
+        logging.info("[load_templates] -> Templates loaded: %d", result)
         return {"message": f"Templates loaded: {result}"}
     except Exception as e:
         logging.exception("Error in /load_templates")

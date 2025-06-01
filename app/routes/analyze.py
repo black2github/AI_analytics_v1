@@ -63,6 +63,7 @@ async def analyze_service_pages(payload: AnalyzePagesRequest):
 
 @router.post("/analyze_service_pages/{code}", tags=["Анализ существующих (ранее) требований конкретного сервиса"])
 async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
+    logging.info("[analyze_service_pages] <- code=%s", code)
     if not is_valid_service(code):
         return {"error": f"Сервис с кодом {code} не найден"}
 
@@ -72,6 +73,7 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
             prompt_template=payload.prompt_template,
             service_code=code
         )
+        logging.info("[analyze_service_pages] -> result={%s}", result)
         return {"results": result}
     except Exception as e:
         logging.exception("Ошибка в /analyze_service_pages")
