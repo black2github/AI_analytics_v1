@@ -63,7 +63,7 @@ def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = Non
         filters = {"service_code": {"$eq": service_code}}   # {"service_code": service_code}
 
     # Распечатка filters в текстовом виде
-    logging.info("[build_context] Filters: %s", json.dumps(filters, indent=2, ensure_ascii=False))
+    logging.debug("[build_context] Filters: %s", json.dumps(filters, indent=2, ensure_ascii=False))
 
     embeddings_model = get_embeddings_model()
 
@@ -120,7 +120,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
         # Определение service_code, если не передан
         if not service_code:
             service_code = resolve_service_code_from_pages_or_user(page_ids)
-            logging.info("[analyze_pages] Resolved service_code: %s", service_code)
+            logging.debug("[analyze_pages] Resolved service_code: %s", service_code)
 
         # Сбор содержимого всех страниц
         requirements = []
@@ -143,17 +143,17 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
 
         # Формируем контекст, исключая все переданные page_ids
         context = build_context(service_code, exclude_page_ids=page_ids)
-        logging.info("[analyze_pages] Context content: %s", context)
+        logging.debug("[analyze_pages] Context content: %s", context)
 
         # Создаем цепочку
         chain = build_chain(prompt_template)
-        logging.info("[analyze_pages] Chain created, input keys expected: %s", chain.input_keys)
+        logging.debug("[analyze_pages] Chain created, input keys expected: %s", chain.input_keys)
 
         # Выполняем анализ всех требований одновременно
-        logging.info("[analyze_pages] Sending to chain.run, requirement:\n[%s]\n, context:\n[%s]", requirements_text, context)
+        logging.debug("[analyze_pages] Sending to chain.run, requirement:\n[%s]\n, context:\n[%s]", requirements_text, context)
 
         result = chain.run({"requirement": requirements_text, "context": context})
-        logging.info("[analyze_pages] Analysis result:\n[%s]", result)
+        logging.debug("[analyze_pages] Analysis result:\n[%s]", result)
 
         # Формируем результат, привязывая анализ к page_ids
         # Парсим, предполагая, что ИИ возвращает структурированный ответ.
@@ -171,7 +171,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
                 analysis = parsed_result.get(page_id, "Анализ не найден для этой страницы")
                 results.append({"page_id": page_id, "analysis": analysis})
         except json.JSONDecodeError as e:
-            logging.warning("[analyze_pages] Не удалось разобрать результат как JSON: %s", str(e))
+            logging.error("[analyze_pages] Не удалось разобрать результат как JSON: %s", str(e))
             results = [{"page_id": page_id, "analysis": result} for page_id in valid_page_ids]
         except ValueError as e:
             logging.error("[analyze_pages] Неверный формат результата: %s", str(e))
@@ -187,6 +187,7 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
     if not service_code:
         page_ids = [item["page_id"] for item in items]
         service_code = resolve_service_code_from_pages_or_user(page_ids)
+        logging.info("[analyze_with_templates] Resolved service_code: %s", service_code)
 
     results = []
     for item in items:
