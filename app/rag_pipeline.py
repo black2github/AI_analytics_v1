@@ -2,11 +2,13 @@
 
 import logging
 import json
+import re
 from typing import Optional, List, Dict, Any
+from bs4 import BeautifulSoup
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
 from app.embedding_store import get_vectorstore
-from app.confluence_loader import get_page_content_by_id
+from app.confluence_loader import get_page_content_by_id, extract_approved_fragments
 from app.llm_interface import get_llm, get_embeddings_model
 from app.service_registry import (
     get_platform_services,
@@ -48,9 +50,17 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
 
 
 def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = None):
-    # Фильтр для отбора всех фрагментов требований, относящихся к сервису, за исключением фрагментов,
-    # созданных из страниц, идентификаторы которых переданы в качестве аргументов.
-    # Формируем составной фильтр
+    """Формирует контекст для анализа, включая фрагменты из хранилища и связанные страницы.
+    Исключает из контекста фрагменты, связанные с анализируемыми страницами.
+
+    Args:
+        service_code: Код сервиса.
+        exclude_page_ids: Список ID страниц, исключаемых из контекста (и они же используются как список страниц для
+        анализа для создания расширенного контекста).
+
+    Returns:
+        Строковый контекст, объединяющий содержимое документов.
+    """
     logging.info("[build_context] <- service_code={%s}, exclude_page_ids={%s}", service_code, exclude_page_ids)
     if exclude_page_ids:
         filters = {
@@ -71,6 +81,7 @@ def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = Non
     # Выборка по фильтру всех релевантных фрагментов требований сервиса
     service_docs = service_store.similarity_search("", filter=filters)
 
+    # Выборка фрагментов из хранилища platform_context
     platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
     platform_docs = []
     platform_services = get_platform_services()
@@ -80,12 +91,76 @@ def build_context(service_code: str, exclude_page_ids: Optional[List[str]] = Non
         plat_docs = plat_store.similarity_search("", filter={"service_code": plat["code"]})
         platform_docs.extend(plat_docs)
 
-    # Создание общего контекста
+    # Базовый контекст из векторных хранилищ
     docs = platform_docs + service_docs
 
-    context = "\n\n".join([d.page_content for d in docs])
-    logging.info("[build_context]: -> {%s}", context)
-    return "\n\n".join([d.page_content for d in docs])
+    # Дополнительный контекст из подтвержденных фрагментов страниц, на которые ведут ссылки из цветных секций
+    linked_docs = []
+    if exclude_page_ids:
+        linked_page_ids = set()
+        for page_id in exclude_page_ids:
+            try:
+                content = get_page_content_by_id(page_id, clean_html=False)  # Получаем HTML
+                if not content:
+                    logging.debug("[build_context] No content for page_id=%s", page_id)
+                    continue
+
+                # Парсинг HTML для извлечения ссылок из цветных секций
+                soup = BeautifulSoup(content, 'html.parser')
+                for element in soup.find_all(["p", "li", "span", "div"]):
+                    style = element.get("style", "").lower()
+                    # Проверяем, что элемент цветной (не черный и не по умолчанию)
+                    if "color" not in style or "rgb(0,0,0)" in style or "#000000" in style:
+                        continue  # Пропускаем черный текст или цвет по умолчанию
+
+                    # Ищем ссылки внутри цветного элемента
+                    for link in element.find_all('a', href=True):
+                        href = link['href']
+                        match = re.search(r'pageId=(\d+)', href)
+                        if match:
+                            linked_page_id = match.group(1)
+                            if linked_page_id not in exclude_page_ids and linked_page_id not in linked_page_ids:
+                                linked_page_ids.add(linked_page_id)
+                                logging.debug("[build_context] Found linked page_id=%s from colored section",
+                                              linked_page_id)
+
+            except Exception as e:
+                logging.error("[build_context] Error processing page_id=%s: %s", page_id, str(e))
+
+        # Ограничиваем количество связанных страниц
+        max_linked_pages = 10
+        linked_page_ids = list(linked_page_ids)[:max_linked_pages]
+        logging.debug("[build_context] Processing %d linked page_ids", len(linked_page_ids))
+
+        # Загружаем подтвержденные фрагменты связанных страниц
+        for linked_page_id in linked_page_ids:
+            try:
+                linked_html = get_page_content_by_id(linked_page_id, clean_html=False)
+                if linked_html:
+                    approved_content = extract_approved_fragments(linked_html)
+                    if approved_content:
+                        linked_docs.append(approved_content)
+                        logging.debug("[build_context] Added approved content for linked page_id=%s", linked_page_id)
+                    else:
+                        logging.debug("[build_context] No approved content for linked page_id=%s", linked_page_id)
+                else:
+                    logging.debug("[build_context] No content for linked page_id=%s", linked_page_id)
+            except Exception as e:
+                logging.error("[build_context] Error loading linked page_id=%s: %s", linked_page_id, str(e))
+
+    # Объединяем контекст
+    context_parts = [d.page_content for d in docs] + linked_docs
+    context = "\n\n".join(context_parts) if context_parts else ""
+
+    # Ограничиваем длину контекста для deepseek-chat
+    max_context_length = 4000
+    if len(context) > max_context_length:
+        context = context[:max_context_length]
+        logging.info("[build_context] Context truncated to %d characters", max_context_length)
+
+    logging.info("[build_context] -> Context length: %d characters, linked_pages: %d",
+                 len(context), len(linked_docs))
+    return context
 
 
 def analyze_text(text: str, prompt_template: Optional[str] = None, service_code: Optional[str] = None):
