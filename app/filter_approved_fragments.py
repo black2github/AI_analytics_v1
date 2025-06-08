@@ -1,4 +1,4 @@
-# app/filter_approved_fragments_v16_fixed.py - ТОЧЕЧНЫЕ ИСПРАВЛЕНИЯ
+# app/filter_approved_fragments.py
 
 import logging
 from typing import List, Optional, Dict, Any
@@ -7,12 +7,16 @@ import re
 
 
 def is_strictly_black_color(color_value: str) -> bool:
-    """Проверяет строго черный цвет"""
+    """Проверяет черный цвет и часть цветов из верхней строки редактора Confluence"""
     color_value = color_value.strip().lower()
     black_colors = {
         'black', '#000', '#000000',
         'rgb(0,0,0)', 'rgb(0, 0, 0)',
-        'rgba(0,0,0,1)', 'rgba(0, 0, 0, 1)'
+        'rgba(0,0,0,1)', 'rgba(0, 0, 0, 1)',
+        'rgb(51,51,0)', 'rgba(51, 51, 0)',
+        'rgb(0,51,0)', 'rgba(0, 51, 0)',
+        'rgb(0,51,102)', 'rgba(0, 51, 102)',
+        'rgb(51,51,51)', 'rgba(51, 51, 51)'
     }
     return color_value in black_colors
 
@@ -21,6 +25,8 @@ def filter_approved_fragments(html: str) -> str:
     """
     Извлекает подтвержденные фрагменты с гибридной разметкой (Markdown + HTML)
     """
+    logging.debug("[filter_approved_fragments] <- {%s}", html)
+
     if not html or not html.strip():
         return ""
 
@@ -390,12 +396,17 @@ def filter_approved_fragments(html: str) -> str:
         for i, row in enumerate(rows):
             cells = row.find_all(["td", "th"], recursive=False)
             row_data = []
+            row_has_content = False  # Переносим проверку выше
 
             is_header_row = all(cell.name == "th" for cell in cells)
 
             for cell in cells:
                 # Получаем содержимое ячейки
                 cell_content = process_table_cell(cell)
+
+                # Проверяем, есть ли реальное содержимое в ячейке
+                if cell_content and cell_content.strip():
+                    row_has_content = True
 
                 # Добавляем HTML атрибуты для объединения ячеек
                 html_attrs = []
@@ -412,8 +423,8 @@ def filter_approved_fragments(html: str) -> str:
 
                 row_data.append(cell_text)
 
-            # Добавляем строку с данными только если есть содержимое
-            if any(cell for cell in row_data):
+            # Добавляем строку только если в ней есть реальное содержимое
+            if row_has_content:
                 if is_header_row and not has_headers:
                     # Первая строка заголовков
                     table_lines.append("| " + " | ".join(row_data) + " |")
@@ -425,6 +436,7 @@ def filter_approved_fragments(html: str) -> str:
 
         return "\n".join(table_lines) if table_lines else ""
 
+
     def process_list(list_element: Tag) -> str:
         """Обрабатывает список"""
         list_items = []
@@ -434,6 +446,7 @@ def filter_approved_fragments(html: str) -> str:
                 prefix = "- " if list_element.name == "ul" else "1. "
                 list_items.append(f"{prefix}{item_text.strip()}")
         return "\n".join(list_items)
+
 
     def process_elements_sequentially(container) -> List[str]:
         """Обрабатывает элементы в том порядке, как они идут в HTML"""
@@ -484,6 +497,7 @@ def filter_approved_fragments(html: str) -> str:
     result = re.sub(r'\n\s*\n+', '\n\n', result)
     result = re.sub(r'[ \t]+', ' ', result)
 
+    logging.debug("[filter_approved_fragments] -> {%s}", result)
     return result.strip()
 
 
@@ -497,7 +511,6 @@ if __name__ == "__main__":
         result = filter_approved_fragments(html_content)
 
         print("=" * 80)
-        print("ТЕСТ ТОЧЕЧНЫХ ИСПРАВЛЕНИЙ:")
         print(f"Результат:")
         print(result)
         print("=" * 80)
