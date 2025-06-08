@@ -326,11 +326,18 @@ def filter_approved_fragments(html: str) -> str:
 
         # ИСПРАВЛЕНИЕ 4: Упрощенная обработка ссылок для вложенных таблиц
         if element.name in ["a", "ac:link"]:
-            # Проверяем, является ли ссылка черной в явном виде
+            # НОВАЯ ЛОГИКА: Проверяем сам элемент ссылки и его прямого родителя
             if has_colored_style(element):
                 return ""  # Цветная ссылка - исключаем
 
-            # Для черных ссылок или ссылок без цвета
+            # ИСПРАВЛЕНИЕ: Проверяем родительский элемент только на один уровень вверх
+            # и только если он не является ячейкой таблицы
+            parent = element.parent
+            if parent and isinstance(parent, Tag) and parent.name not in ["td", "th"]:
+                if has_colored_style(parent):
+                    return ""  # Ссылка в цветном контейнере - исключаем
+
+            # Для подтвержденных ссылок
             ri_page = element.find("ri:page")
             if ri_page and ri_page.get("ri:content-title"):
                 return f'[{ri_page["ri:content-title"]}]'
@@ -344,25 +351,18 @@ def filter_approved_fragments(html: str) -> str:
             approved_parts = []
             for child in element.children:
                 if isinstance(child, Tag):
-                    # Проверяем, есть ли явно черный стиль
-                    child_style = child.get("style", "").lower()
-                    if "color" in child_style:
-                        color_match = re.search(r'color\s*:\s*([^;]+)', child_style)
-                        if color_match:
-                            color_value = color_match.group(1).strip()
-                            if is_strictly_black_color(color_value):
-                                child_text = extract_approved_text_for_nested_table(child)
-                                if child_text:
-                                    approved_parts.append(child_text)
+                    # ИСПРАВЛЕНИЕ: Рекурсивно вызываем функцию для дочерних элементов
+                    child_text = extract_approved_text_for_nested_table(child)
+                    if child_text:
+                        approved_parts.append(child_text)
                 elif isinstance(child, NavigableString):
                     text = str(child).strip()
                     if text:
                         approved_parts.append(text)
             return " ".join(approved_parts)
 
-        # Элемент не имеет цветного стиля, но проверяем предков
-        if is_in_colored_ancestor_chain(element):
-            return ""
+        # ИСПРАВЛЕНИЕ: Убираем проверку цветных предков для вложенных таблиц
+        # Это позволит обрабатывать черные ссылки в цветных ячейках
 
         # Рекурсивно обрабатываем дочерние элементы
         child_texts = []
