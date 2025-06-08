@@ -1,4 +1,4 @@
-# app/filter_approved_fragments_v14_fixed.py - ИСПРАВЛЕНИЕ ВСЕХ ПРОБЛЕМ
+# app/filter_approved_fragments_v16_fixed.py - ТОЧЕЧНЫЕ ИСПРАВЛЕНИЯ
 
 import logging
 from typing import List, Optional, Dict, Any
@@ -19,7 +19,7 @@ def is_strictly_black_color(color_value: str) -> bool:
 
 def filter_approved_fragments(html: str) -> str:
     """
-    Извлекает подтвержденные фрагменты с ПРАВИЛЬНОЙ обработкой всех элементов
+    Извлекает подтвержденные фрагменты с гибридной разметкой (Markdown + HTML)
     """
     if not html or not html.strip():
         return ""
@@ -52,7 +52,7 @@ def filter_approved_fragments(html: str) -> str:
         """Проверяет, есть ли цветные предки у элемента"""
         current = element.parent
         while current and isinstance(current, Tag):
-            if current.name in ["ac:rich-text-body", "body", "html"]:
+            if current.name == "ac:rich-text-body":
                 break
             if has_colored_style(current):
                 return True
@@ -140,6 +140,7 @@ def filter_approved_fragments(html: str) -> str:
             if color_match:
                 color_value = color_match.group(1).strip()
                 if is_strictly_black_color(color_value):
+                    # ВОЗВРАЩАЕМСЯ К ПРОСТОМУ ИЗВЛЕЧЕНИЮ ТЕКСТА
                     return element.get_text(strip=True)
 
         # Рекурсивно ищем в дочерних элементах
@@ -164,8 +165,14 @@ def filter_approved_fragments(html: str) -> str:
         if element.name == "s":
             return ""
 
-        # Игнорируем Jira макросы всегда
+        # ИСПРАВЛЕНИЕ 1: Игнорируем Jira макросы всегда и ВСЕ их параметры
         if element.name == "ac:structured-macro" and element.get("ac:name") == "jira":
+            return ""
+
+        # ИСПРАВЛЕНИЕ 2: Игнорируем ВСЕ параметры Jira макросов
+        if element.name == "ac:parameter" and element.parent and \
+                element.parent.name == "ac:structured-macro" and \
+                element.parent.get("ac:name") == "jira":
             return ""
 
         # Время - только если элемент подтвержден
@@ -174,7 +181,7 @@ def filter_approved_fragments(html: str) -> str:
                 return element["datetime"]
             return ""
 
-        # Обработка ссылок
+        # Обработка ссылок - ВОЗВРАЩАЕМСЯ К ПРОСТОЙ ЛОГИКЕ
         if element.name in ["a", "ac:link"]:
             if is_in_colored_ancestor_chain(element):
                 return ""
@@ -207,49 +214,167 @@ def filter_approved_fragments(html: str) -> str:
 
         return " ".join(child_texts)
 
-    def process_table_cell(cell, is_nested=False) -> str:
+    def process_table_cell(cell, is_nested=False):
         """Обрабатывает содержимое ячейки таблицы"""
-        # ИСПРАВЛЕНИЕ: Проверяем, есть ли вложенная таблица
         nested_table = cell.find("table")
 
         if nested_table:
-            # ИСПРАВЛЕНИЕ: обрабатываем ВСЕ содержимое ячейки
-            cell_parts = []
+            # Ячейка содержит вложенную таблицу
+            # Сначала извлекаем текст ДО таблицы
+            text_before = ""
+            for child in cell.children:
+                if child == nested_table:
+                    break
+                if isinstance(child, NavigableString):
+                    text_before += str(child)
+                elif isinstance(child, Tag) and child.name != "table":
+                    text_before += extract_approved_text(child)
 
-            # Сначала извлекаем ВЕСЬ текст ДО таблицы
-            for element in cell.children:
-                if isinstance(element, Tag) and element.name == "table":
-                    break  # Останавливаемся на таблице
-                else:
-                    # Извлекаем текст из элемента
-                    text_part = extract_approved_text(element)
-                    if text_part.strip():
-                        cell_parts.append(text_part.strip())
+            # Обрабатываем вложенную таблицу
+            nested_table_html = process_nested_table_to_html(nested_table)
 
-            # Затем обрабатываем вложенную таблицу
-            table_content = process_table(nested_table, is_nested=True)
-            if table_content.strip():
-                cell_parts.append(table_content)
-
-            # Затем извлекаем текст ПОСЛЕ таблицы
+            # Извлекаем текст ПОСЛЕ таблицы
+            text_after = ""
             found_table = False
-            for element in cell.children:
-                if isinstance(element, Tag) and element.name == "table":
+            for child in cell.children:
+                if child == nested_table:
                     found_table = True
                     continue
                 if found_table:
-                    text_part = extract_approved_text(element)
-                    if text_part.strip():
-                        cell_parts.append(text_part.strip())
+                    if isinstance(child, NavigableString):
+                        text_after += str(child)
+                    elif isinstance(child, Tag) and child.name != "table":
+                        text_after += extract_approved_text(child)
 
-            return "\n".join(cell_parts) if cell_parts else ""
+            # Объединяем результат
+            result_parts = []
+            if text_before.strip():
+                result_parts.append(text_before.strip())
+            if nested_table_html:
+                result_parts.append(f"**Таблица:** {nested_table_html}")
+            if text_after.strip():
+                result_parts.append(text_after.strip())
+
+            return " ".join(result_parts)
         else:
             # Обычная ячейка без вложенной таблицы
             return extract_approved_text(cell)
 
-    def process_table(table: Tag, is_nested=False) -> str:
-        """Обрабатывает таблицу с сохранением структуры"""
+    def process_nested_table_to_html(table: Tag) -> str:
+        """Преобразует вложенную таблицу в HTML"""
+        rows = table.find_all("tr", recursive=False)
+        if not rows:
+            tbody = table.find("tbody")
+            thead = table.find("thead")
+            if tbody:
+                rows.extend(tbody.find_all("tr", recursive=False))
+            if thead:
+                rows.extend(thead.find_all("tr", recursive=False))
 
+        if not rows:
+            return ""
+
+        html_parts = ["<table>"]
+
+        for row in rows:
+            cells = row.find_all(["td", "th"], recursive=False)
+
+            row_parts = ["<tr>"]
+            for cell in cells:
+                tag_name = "th" if cell.name == "th" else "td"
+
+                # Получаем атрибуты rowspan/colspan
+                attrs = []
+                if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
+                    attrs.append(f'rowspan="{cell["rowspan"]}"')
+                if cell.get("colspan") and int(cell.get("colspan", 1)) > 1:
+                    attrs.append(f'colspan="{cell["colspan"]}"')
+
+                attrs_str = " " + " ".join(attrs) if attrs else ""
+
+                # ИСПРАВЛЕНИЕ 3: Специальная обработка ссылок во вложенных таблицах
+                cell_content = extract_approved_text_for_nested_table(cell)
+                row_parts.append(f"<{tag_name}{attrs_str}>{cell_content}</{tag_name}>")
+
+            row_parts.append("</tr>")
+            html_parts.append("".join(row_parts))
+
+        html_parts.append("</table>")
+        return "".join(html_parts)
+
+    def extract_approved_text_for_nested_table(element) -> str:
+        """Специальная функция для извлечения текста из вложенных таблиц"""
+        if isinstance(element, NavigableString):
+            return str(element).strip()
+
+        if not isinstance(element, Tag):
+            return ""
+
+        # Игнорируем зачеркнутый текст всегда
+        if element.name == "s":
+            return ""
+
+        # Игнорируем Jira макросы всегда
+        if element.name == "ac:structured-macro" and element.get("ac:name") == "jira":
+            return ""
+
+        # Время - только если элемент подтвержден
+        if element.name == "time" and element.get("datetime"):
+            if not has_colored_style(element) and not is_in_colored_ancestor_chain(element):
+                return element["datetime"]
+            return ""
+
+        # ИСПРАВЛЕНИЕ 4: Упрощенная обработка ссылок для вложенных таблиц
+        if element.name in ["a", "ac:link"]:
+            # Проверяем, является ли ссылка черной в явном виде
+            if has_colored_style(element):
+                return ""  # Цветная ссылка - исключаем
+
+            # Для черных ссылок или ссылок без цвета
+            ri_page = element.find("ri:page")
+            if ri_page and ri_page.get("ri:content-title"):
+                return f'[{ri_page["ri:content-title"]}]'
+            elif element.get_text(strip=True):
+                return f'[{element.get_text(strip=True)}]'
+            else:
+                return ""
+
+        # Если элемент сам цветной - ищем черные дочерние элементы
+        if has_colored_style(element):
+            approved_parts = []
+            for child in element.children:
+                if isinstance(child, Tag):
+                    # Проверяем, есть ли явно черный стиль
+                    child_style = child.get("style", "").lower()
+                    if "color" in child_style:
+                        color_match = re.search(r'color\s*:\s*([^;]+)', child_style)
+                        if color_match:
+                            color_value = color_match.group(1).strip()
+                            if is_strictly_black_color(color_value):
+                                child_text = extract_approved_text_for_nested_table(child)
+                                if child_text:
+                                    approved_parts.append(child_text)
+                elif isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        approved_parts.append(text)
+            return " ".join(approved_parts)
+
+        # Элемент не имеет цветного стиля, но проверяем предков
+        if is_in_colored_ancestor_chain(element):
+            return ""
+
+        # Рекурсивно обрабатываем дочерние элементы
+        child_texts = []
+        for child in element.children:
+            child_text = extract_approved_text_for_nested_table(child)
+            if child_text.strip():
+                child_texts.append(child_text.strip())
+
+        return " ".join(child_texts)
+
+    def process_table(table: Tag) -> str:
+        """Обрабатывает таблицу с гибридной разметкой"""
         rows = table.find_all("tr", recursive=False)
         if not rows:
             tbody = table.find("tbody")
@@ -269,10 +394,25 @@ def filter_approved_fragments(html: str) -> str:
             is_header_row = all(cell.name == "th" for cell in cells)
 
             for cell in cells:
-                cell_content = process_table_cell(cell, is_nested=True)
-                row_data.append(cell_content.strip() if cell_content else "")
+                # Получаем содержимое ячейки
+                cell_content = process_table_cell(cell)
 
-            # Добавляем строку с данными
+                # Добавляем HTML атрибуты для объединения ячеек
+                html_attrs = []
+                if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
+                    html_attrs.append(f'rowspan="{cell["rowspan"]}"')
+                if cell.get("colspan") and int(cell.get("colspan", 1)) > 1:
+                    html_attrs.append(f'colspan="{cell["colspan"]}"')
+
+                if html_attrs:
+                    attrs_str = " ".join(html_attrs)
+                    cell_text = f'<td {attrs_str}>{cell_content}</td>' if cell_content else f'<td {attrs_str}></td>'
+                else:
+                    cell_text = cell_content if cell_content else ""
+
+                row_data.append(cell_text)
+
+            # Добавляем строку с данными только если есть содержимое
             if any(cell for cell in row_data):
                 if is_header_row and not has_headers:
                     # Первая строка заголовков
@@ -299,10 +439,7 @@ def filter_approved_fragments(html: str) -> str:
         """Обрабатывает элементы в том порядке, как они идут в HTML"""
         result_parts = []
 
-        # ИСПРАВЛЕНИЕ: берем ПРЯМЫЕ дочерние элементы
-        direct_children = [child for child in container.children if isinstance(child, Tag)]
-
-        for element in direct_children:
+        for element in container.find_all(True, recursive=False):
             if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
                 # Заголовки
                 header_text = extract_approved_text(element)
@@ -311,10 +448,10 @@ def filter_approved_fragments(html: str) -> str:
                     result_parts.append(f"{level_prefix} {header_text.strip()}")
 
             elif element.name == "table":
-                # Таблицы
+                # Таблицы с маркером
                 table_content = process_table(element)
                 if table_content.strip():
-                    result_parts.append(table_content)
+                    result_parts.append(f"**Таблица:**\n{table_content}")
 
             elif element.name in ["ul", "ol"]:
                 # Списки
@@ -328,23 +465,21 @@ def filter_approved_fragments(html: str) -> str:
                 if para_text.strip():
                     result_parts.append(para_text.strip())
 
+            elif element.name in ["div", "span"]:
+                # Обработка div/span элементов
+                div_text = extract_approved_text(element)
+                if div_text.strip():
+                    result_parts.append(div_text.strip())
+
             elif element.name == "ac:rich-text-body":
                 # Рекурсивно обрабатываем содержимое
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
-            # ИСПРАВЛЕНИЕ: добавляем обработку других элементов
-            elif element.name in ["div", "span"]:
-                # Обрабатываем как обычный текстовый элемент
-                element_text = extract_approved_text(element)
-                if element_text.strip():
-                    result_parts.append(element_text.strip())
-
         return result_parts
 
-    # Основная обработка - СОХРАНЯЕМ ПОСЛЕДОВАТЕЛЬНОСТЬ
+    # Основная обработка
     approved_fragments = process_elements_sequentially(soup)
-
     result = "\n\n".join(approved_fragments)
     result = re.sub(r'\n\s*\n+', '\n\n', result)
     result = re.sub(r'[ \t]+', ' ', result)
@@ -354,19 +489,19 @@ def filter_approved_fragments(html: str) -> str:
 
 # Тестирование
 if __name__ == "__main__":
-    def test_original_complex_html():
-        """Тест на оригинальном сложном HTML"""
+    def test_pointwise_fixes():
+        """Тест точечных исправлений"""
 
         html_content = '''<p class="auto-cursor-target"><br /></p><ac:structured-macro ac:name="expand" ac:schema-version="1" ac:macro-id="c1418da8-49b0-482f-baf5-f57c89d06c9b"><ac:parameter ac:name="title">История изменений</ac:parameter><ac:rich-text-body><h1 class="auto-cursor-target">История изменений</h1><table class="wrapped fixed-width"><colgroup><col style="width: 10.3655%;" /><col style="width: 46.9704%;" /><col style="width: 25.6885%;" /><col style="width: 16.9754%;" /></colgroup><tbody><tr><th><span style="color: rgb(0,51,102);">Дата</span></th><th><span style="color: rgb(0,51,102);">Описание</span></th><th>Автор</th><th><span style="color: rgb(0,51,102);">Задача в JIRA</span></th></tr><tr><td style="text-align: left;"><div class="content-wrapper"><p><time datetime="2024-12-20" />&nbsp;</p></div></td><td style="text-align: left;"><span style="color: rgb(255,102,0);">Красные текст. Открытие <ac:link><ri:page ri:content-title="[КК_СК] ЭФ Клиента &quot;Фильтр списка карт&quot;" /></ac:link></span></td><td style="text-align: left;"><div class="content-wrapper"><p><ac:link><ri:user ri:userkey="8a69e14184d815fe0185a5cc43be0016" /></ac:link>&nbsp;</p></div></td><td><div class="content-wrapper"><p><br /></p></div></td></tr><tr><td><div class="content-wrapper"><p><span style="color: rgb(0,51,102);"><em>01.12.2021</em></span></p></div></td><td><span style="color: rgb(0,51,102);">Первичное опиисание</span></td><td><div class="content-wrapper"><p><em><ac:link><ri:user ri:userkey="8a69e14184d815fe0185a5cc43be0016" /></ac:link> </em></p></div></td><td><div class="content-wrapper"><p><span style="color: rgb(0,51,102);"><ac:structured-macro ac:name="jira" ac:schema-version="1" ac:macro-id="8c161b0d-5c28-4a30-8cf5-8f8293f2fb6f"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="columnIds">issuekey,summary,issuetype,created,updated,duedate,assignee,reporter,priority,status,resolution</ac:parameter><ac:parameter ac:name="columns">key,summary,type,created,updated,due,assignee,reporter,priority,status,resolution</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-18088</ac:parameter></ac:structured-macro></span></p></div></td></tr></tbody></table><p class="auto-cursor-target"><br /></p></ac:rich-text-body></ac:structured-macro><h1 class="auto-cursor-target">Описание</h1><p>В данном документе приведены контроли реквизитов запроса, используемые:</p><ul><li>Группа 1: подтвержденная группа с линком <ac:link><ri:page ri:content-title="OLD - /business-cards/get-page - ЭКО_Получение списка корпоративных карт" /></ac:link>.&nbsp;</li><li><span style="color: rgb(255,102,0);">Группа 2: красная группа с линком <ac:link><ri:page ri:content-title="[КК_СК] ЭФ Клиента &quot;Фильтр списка карт&quot;" /></ac:link>&nbsp;</span></li></ul><h1>Проверки</h1><p><br /></p><table class="fixed-width wrapped" style="width: 58.5092%;"><colgroup><col style="width: 6.88673%;" /><col style="width: 16.2669%;" /><col style="width: 19.7103%;" /><col style="width: 17.573%;" /><col style="width: 39.5393%;" /></colgroup><tbody><tr><th>Hdr <span style="color: rgb(255,0,0);">1</span></th><th><span style="color: rgb(0,0,0);">Hdr 2&nbsp;</span></th><th>Hdr 3</th><th><s>Hdr</s> 4</th><th><span style="color: rgb(255,0,0);">CHdr</span> 6</th></tr><tr><td rowspan="2">1</td><td rowspan="2"><p>Txt 2.1.1 <span style="color: rgb(255,0,0);">Ctxt 2.1.2</span>&nbsp;<strong>BTxt 2.1.3 </strong>&nbsp;NTxt 2.1.4</p></td><td>Td 3.1 <span style="color: rgb(255,0,0);">Ctd 3.1</span> LTxt 3/</td><td><span style="color: rgb(255,0,0);">CTxt 4.1.1</span> UTxt 4.1.2</td><td><br /></td></tr><tr><td rowspan="2"><p><span style="color: rgb(255,0,0);"><s>UCtxt 3..2.1</s></span> <s>UTxt 3.2.2 <strong>UBTxt 3.2.3</strong></s></p>Txt 3.1=строка</td><td><p><span style="color: rgb(255,0,0);"><strong>CTxt 4.2.1</strong></span>&nbsp;<ac:link><ri:page ri:content-title="Клиент Банка" /></ac:link><span style="color: rgb(204,153,255);">.<span style="color: rgb(255,0,0);">CTxt 4.2.3.</span></span></p></td><td><br /></td></tr><tr><td rowspan="2">2</td><td rowspan="2"><p><span style="color: rgb(204,153,255);"><span style="color: rgb(255,0,0);">Ctxt 2.2</span> <span style="color: rgb(0,0,0);">Txt 2.2.2</span></span></p><p><br /></p></td><td><span style="color: rgb(255,0,0);">Txt_4.3.1 <span style="color: rgb(0,0,0);">Txt_4.3.1</span></span></td><td><span style="color: rgb(255,0,0);">CTxt_6.3.1 <span style="color: rgb(0,0,0);">Txt_6.3.2</span></span></td></tr><tr><td><span style="color: rgb(204,153,255);"><span style="color: rgb(255,0,0);">Ctxt3.3=строка</span></span></td><td><p style="text-align: left;"><strong>BTxt 4.4.1&nbsp; <ac:link><ri:page ri:content-title="Клиент Банка" /></ac:link>.</strong> СTxt 4.3.2 <ac:link><ri:page ri:content-title="Клиент Банка" /></ac:link><span style="color: rgb(204,153,255);">.</span></p></td><td><p>CTxt6.4.1:</p><table data-mce-resize="false"><colgroup class=""><col class="" /><col class="" /><col class="" /></colgroup><tbody class=""><tr class=""><th>заг_1</th><th><span style="color: rgb(153,51,0);">заг_2</span></th><th><span style="color: rgb(0,0,0);">заг_3</span></th></tr><tr class=""><td><p>Вл_Txt_1_1 <span style="color: rgb(255,0,0);">Вл_Txt_1_2</span></p><p><strong><span style="color: rgb(0,0,0);">Вл_BTxt_1.1.3</span></strong></p><p><span style="color: rgb(255,0,0);"><strong><ac:link><ri:page ri:content-title="[ОНК] Страница 1" /></ac:link></strong></span></p></td><td rowspan="2"><p>Вл_Txt_2_1 <span style="color: rgb(255,0,0);"><strong><ac:link><ri:page ri:content-title="[ОНК] Страница 1" /></ac:link></strong></span></p><p><span style="color: rgb(255,0,0);">Вл_Txt_2_2</span></p>&nbsp;<strong>BTxt_2_3</strong></td><td><p>Вл_Txt_3_1</p></td></tr><tr class=""><td>Вл_Txt_1_2_2</td><td><p><span style="color: rgb(255,0,0);">Вл_Txt_3_2_1</span></p><p><strong>Вл_BTxt_3_2_2</strong></p></td></tr></tbody></table><p class="auto-cursor-target"><br /></p></td></tr></tbody></table><p class="auto-cursor-target"><br /></p>'''
 
         result = filter_approved_fragments(html_content)
 
-        print("=" * 60)
-        print("ТЕСТ ИСПРАВЛЕННОГО АЛГОРИТМА:")
+        print("=" * 80)
+        print("ТЕСТ ТОЧЕЧНЫХ ИСПРАВЛЕНИЙ:")
         print(f"Результат:")
         print(result)
-        print("=" * 60)
+        print("=" * 80)
 
 
     # Запускаем тест
-    test_original_complex_html()
+    test_pointwise_fixes()
