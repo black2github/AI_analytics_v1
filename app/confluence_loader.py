@@ -1,11 +1,14 @@
 # app/confluence_loader.py
 
 import logging
+from copy import deepcopy
+from types import NoneType
 from typing import List, Dict, Optional
 from atlassian import Confluence
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import markdownify
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
+from app.filter_approved_fragments import filter_approved_fragments
 
 if CONFLUENCE_BASE_URL is None:
     raise ValueError("Переменная окружения CONFLUENCE_BASE_URL не задана")
@@ -16,46 +19,67 @@ confluence = Confluence(
     password=CONFLUENCE_PASSWORD
 )
 
+try:
+    from markdownify import markdownify as markdownify_fn
+except ImportError:
+    logging.error("[extract_approved_fragments] markdownify package not installed. Install it using 'pip install markdownify'")
+    raise ImportError("markdownify package is required")
+
 def extract_approved_fragments(html: str) -> str:
     """
-    Извлекает только одобренные (чёрные) фрагменты текста, включая ссылки,
-    но только если они находятся внутри одобренных блоков (включая начало блока или его завершение).
+    Извлекает только одобренные (чёрные) фрагменты текста, включая ссылки и таблицы,
+    но только если они находятся внутри одобренных блоков.
     Фильтрация идёт по стилю родительского блока, не по вложенным тегам.
-    Если родитель — цветной (нечёрный), всё внутри удаляется, даже если <a> не имеет цвета.
-    Это поведение — безопасное и строгое, оно предотвращает попадание ссылок, находящихся в «неодобренном» контексте.
+    Если родитель — цветной (нечёрный), всё внутри удаляется.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    fragments = []
-
-    for el in soup.find_all(["p", "li", "span", "div"]):
-        style = el.get("style", "").lower()
-
-        # Явно исключаем цветной текст, если он не чёрный
-        if "color" in style and ("rgb(0,0,0)" not in style and "#000000" not in style):
-            continue # Пропускаем цветной текст (неодобренный)
-
-        # Учитываем только элементы без стиля цвета или с чёрным цветом
-        fragments.append(str(el))
-
-    markdown_text = markdownify.markdownify("\n".join(fragments), heading_style="ATX")
-    return markdown_text.strip()
+    logging.debug("[extract_approved_fragments] <- html={%s}", html)
+    return filter_approved_fragments(html)
 
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[str]:
+    """Получает содержимое страницы Confluence по её ID."""
+    logging.info("[get_page_content_by_id] <- page_id=%s, clean_html=%s", page_id, clean_html)
     try:
-        result = confluence.get_page_by_id(page_id, expand='body.storage')
-        html = result.get("body", {}).get("storage", {}).get("value", "")
+        page = confluence.get_page_by_id(page_id, expand='body.storage')
+        content = page.get('body', {}).get('storage', {}).get('value', '')
+        if not content:
+            logging.warning("[get_page_content_by_id] No content found for page_id=%s", page_id)
+            return None
+
         if clean_html:
-            return markdownify.markdownify(html, heading_style="ATX").strip()
-        return html
+            soup = BeautifulSoup(content, 'html.parser')
+            # Преобразуем таблицы в Markdown
+            for table in soup.find_all('table'):
+                table_md = markdownify.markdownify(str(table), heading_style="ATX")
+                # table_md = markdownify(str(table), heading_style="ATX")
+                table.replace_with(table_md)
+            # Извлекаем текст, сохраняя содержимое всех тегов
+            text_parts = []
+            for element in soup.find_all(['p', 'li', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                text = element.get_text(separator=' ', strip=True)
+                if text:
+                    text_parts.append(text)
+            # Добавляем Markdown-таблицы
+            for md_text in soup.find_all(text=True):
+                if md_text.strip().startswith('|'):
+                    text_parts.append(md_text.strip())
+            content = '\n'.join(text_parts)
+            logging.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
+
+        logging.info("[get_page_content_by_id] -> Content length: %d characters: {%s}", len(content), content)
+        return content
     except Exception as e:
-        logging.warning("Ошибка при получении содержимого страницы {%s}: {%s}", page_id, e)
+        logging.error("[get_page_content_by_id] Error fetching page_id=%s: %s", page_id, str(e))
         return None
 
 
 def get_page_title_by_id(page_id: str) -> Optional[str]:
+    logging.debug("[get_page_title_by_id] <- page_id=%s", page_id)
     try:
         result = confluence.get_page_by_id(page_id, expand='title')
+        logging.debug("[get_page_title_by_id] -> Result: %s", result)
         return result.get("title", "")
     except Exception as e:
         logging.warning("Ошибка при получении содержимого страницы {%s}: {%s}", page_id, e)
