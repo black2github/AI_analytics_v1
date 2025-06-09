@@ -4,6 +4,12 @@ import logging
 from typing import List, Optional, Dict, Any
 from bs4 import BeautifulSoup, Tag, NavigableString
 import re
+import sys
+import io
+
+# Настройка кодировки для Windows консоли
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 
 def is_strictly_black_color(color_value: str) -> bool:
@@ -13,10 +19,10 @@ def is_strictly_black_color(color_value: str) -> bool:
         'black', '#000', '#000000',
         'rgb(0,0,0)', 'rgb(0, 0, 0)',
         'rgba(0,0,0,1)', 'rgba(0, 0, 0, 1)',
-        'rgb(51,51,0)', 'rgba(51, 51, 0)',
-        'rgb(0,51,0)', 'rgba(0, 51, 0)',
-        'rgb(0,51,102)', 'rgba(0, 51, 102)',
-        'rgb(51,51,51)', 'rgba(51, 51, 51)'
+        'rgb(51,51,0)', 'rgb(51, 51, 0)',
+        'rgb(0,51,0)', 'rgb(0, 51, 0)',
+        'rgb(0,51,102)', 'rgb(0, 51, 102)',
+        'rgb(51,51,51)', 'rgb(51, 51, 51)'
     }
     return color_value in black_colors
 
@@ -25,7 +31,7 @@ def filter_approved_fragments(html: str) -> str:
     """
     Извлекает подтвержденные фрагменты с гибридной разметкой (Markdown + HTML)
     """
-    logging.debug("[filter_approved_fragments] <- {%s}", html)
+    logging.debug("[filter_approved_fragments] <- {%s}", html[:100]+"...")
 
     if not html or not html.strip():
         return ""
@@ -263,8 +269,34 @@ def filter_approved_fragments(html: str) -> str:
 
             return " ".join(result_parts)
         else:
-            # Обычная ячейка без вложенной таблицы
-            return extract_approved_text(cell)
+            # ===== ДОБАВЛЯЕМ ОБРАБОТКУ СПИСКОВ В ЯЧЕЙКАХ =====
+            lists = cell.find_all(["ul", "ol"], recursive=False)
+
+            if lists:
+                # В ячейке есть списки - обрабатываем их отдельно
+                cell_parts = []
+
+                for child in cell.children:
+                    if isinstance(child, NavigableString):
+                        text = str(child).strip()
+                        if text:
+                            cell_parts.append(text)
+                    elif isinstance(child, Tag):
+                        if child.name in ["ul", "ol"]:
+                            # Обрабатываем список с сохранением структуры
+                            list_content = process_list(child, 0)
+                            if list_content:
+                                cell_parts.append(list_content)
+                        else:
+                            # Обычный элемент
+                            text = extract_approved_text(child)
+                            if text.strip():
+                                cell_parts.append(text.strip())
+
+                return "\n".join(cell_parts)
+            else:
+                # Обычная ячейка без списков
+                return extract_approved_text(cell)
 
     def process_nested_table_to_html(table: Tag) -> str:
         """Преобразует вложенную таблицу в HTML"""
@@ -436,17 +468,60 @@ def filter_approved_fragments(html: str) -> str:
 
         return "\n".join(table_lines) if table_lines else ""
 
-
-    def process_list(list_element: Tag) -> str:
-        """Обрабатывает список"""
+    def process_list(list_element: Tag, indent_level: int = 0) -> str:
+        """Обрабатывает список с поддержкой вложенности"""
         list_items = []
-        for li in list_element.find_all("li", recursive=False):
-            item_text = extract_approved_text(li)
-            if item_text.strip():
-                prefix = "- " if list_element.name == "ul" else "1. "
-                list_items.append(f"{prefix}{item_text.strip()}")
-        return "\n".join(list_items)
+        indent = "    " * indent_level  # 4 пробела на уровень
 
+        # Определяем символы для разных уровней вложенности
+        if list_element.name == "ul":
+            # Для ненумерованных списков чередуем символы по уровням
+            markers = ["-", "*", "+"]
+            marker = markers[indent_level % len(markers)]
+        else:
+            # Для нумерованных списков всегда цифры с точкой
+            marker = None  # будем добавлять номер динамически
+
+        item_counter = 1
+
+        for li in list_element.find_all("li", recursive=False):
+            # Извлекаем прямое содержимое элемента li (без вложенных списков)
+            item_content_parts = []
+
+            for child in li.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        item_content_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        # Вложенный список обработаем отдельно
+                        continue
+                    else:
+                        # Обычный текстовый элемент
+                        text = extract_approved_text(child)
+                        if text.strip():
+                            item_content_parts.append(text.strip())
+
+            # Формируем основной текст пункта
+            item_text = " ".join(item_content_parts)
+
+            if item_text.strip():
+                # Добавляем маркер и отступ
+                if list_element.name == "ul":
+                    list_items.append(f"{indent}{marker} {item_text.strip()}")
+                else:
+                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
+                    item_counter += 1
+
+            # Обрабатываем вложенные списки
+            nested_lists = li.find_all(["ul", "ol"], recursive=False)
+            for nested_list in nested_lists:
+                nested_content = process_list(nested_list, indent_level + 1)
+                if nested_content:
+                    list_items.append(nested_content)
+
+        return "\n".join(list_items)
 
     def process_elements_sequentially(container) -> List[str]:
         """Обрабатывает элементы в том порядке, как они идут в HTML"""
@@ -466,9 +541,10 @@ def filter_approved_fragments(html: str) -> str:
                 if table_content.strip():
                     result_parts.append(f"**Таблица:**\n{table_content}")
 
+
             elif element.name in ["ul", "ol"]:
-                # Списки
-                list_content = process_list(element)
+                # Списки с поддержкой вложенности
+                list_content = process_list(element, 0)  # начинаем с уровня 0
                 if list_content:
                     result_parts.append(list_content)
 
@@ -489,6 +565,22 @@ def filter_approved_fragments(html: str) -> str:
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
+            # ===== ДОБАВЛЯЕМ ОБРАБОТКУ CONFLUENCE LAYOUT =====
+            elif element.name == "ac:layout":
+                # Обрабатываем layout контейнер
+                nested_parts = process_elements_sequentially(element)
+                result_parts.extend(nested_parts)
+
+            elif element.name == "ac:layout-section":
+                # Обрабатываем секцию layout
+                nested_parts = process_elements_sequentially(element)
+                result_parts.extend(nested_parts)
+
+            elif element.name == "ac:layout-cell":
+                # Обрабатываем ячейку layout
+                nested_parts = process_elements_sequentially(element)
+                result_parts.extend(nested_parts)
+
         return result_parts
 
     # Основная обработка
@@ -506,7 +598,7 @@ if __name__ == "__main__":
     def test_pointwise_fixes():
         """Тест точечных исправлений"""
 
-        html_content = '''<p class="auto-cursor-target"><br /></p><ac:structured-macro ac:name="expand" ac:schema-version="1" ac:macro-id="c1418da8-49b0-482f-baf5-f57c89d06c9b"><ac:parameter ac:name="title">История изменений</ac:parameter><ac:rich-text-body><h1 class="auto-cursor-target">История изменений</h1><table class="wrapped fixed-width"><colgroup><col style="width: 10.3655%;" /><col style="width: 46.9704%;" /><col style="width: 25.6885%;" /><col style="width: 16.9754%;" /></colgroup><tbody><tr><th><span style="color: rgb(0,51,102);">Дата</span></th><th><span style="color: rgb(0,51,102);">Описание</span></th><th>Автор</th><th><span style="color: rgb(0,51,102);">Задача в JIRA</span></th></tr><tr><td style="text-align: left;"><div class="content-wrapper"><p><time datetime="2024-12-20" />&nbsp;</p></div></td><td style="text-align: left;"><span style="color: rgb(255,102,0);">Красные текст. Открытие <ac:link><ri:page ri:content-title="[КК_СК] ЭФ Клиента &quot;Фильтр списка карт&quot;" /></ac:link></span></td><td style="text-align: left;"><div class="content-wrapper"><p><ac:link><ri:user ri:userkey="8a69e14184d815fe0185a5cc43be0016" /></ac:link>&nbsp;</p></div></td><td><div class="content-wrapper"><p><br /></p></div></td></tr><tr><td><div class="content-wrapper"><p><span style="color: rgb(0,51,102);"><em>01.12.2021</em></span></p></div></td><td><span style="color: rgb(0,51,102);">Первичное опиисание</span></td><td><div class="content-wrapper"><p><em><ac:link><ri:user ri:userkey="8a69e14184d815fe0185a5cc43be0016" /></ac:link> </em></p></div></td><td><div class="content-wrapper"><p><span style="color: rgb(0,51,102);"><ac:structured-macro ac:name="jira" ac:schema-version="1" ac:macro-id="8c161b0d-5c28-4a30-8cf5-8f8293f2fb6f"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="columnIds">issuekey,summary,issuetype,created,updated,duedate,assignee,reporter,priority,status,resolution</ac:parameter><ac:parameter ac:name="columns">key,summary,type,created,updated,due,assignee,reporter,priority,status,resolution</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-18088</ac:parameter></ac:structured-macro></span></p></div></td></tr></tbody></table><p class="auto-cursor-target"><br /></p></ac:rich-text-body></ac:structured-macro><h1 class="auto-cursor-target">Описание</h1><p>В данном документе приведены контроли реквизитов запроса, используемые:</p><ul><li>Группа 1: подтвержденная группа с линком <ac:link><ri:page ri:content-title="OLD - /business-cards/get-page - ЭКО_Получение списка корпоративных карт" /></ac:link>.&nbsp;</li><li><span style="color: rgb(255,102,0);">Группа 2: красная группа с линком <ac:link><ri:page ri:content-title="[КК_СК] ЭФ Клиента &quot;Фильтр списка карт&quot;" /></ac:link>&nbsp;</span></li></ul><h1>Проверки</h1><p><br /></p><table class="fixed-width wrapped" style="width: 58.5092%;"><colgroup><col style="width: 6.88673%;" /><col style="width: 16.2669%;" /><col style="width: 19.7103%;" /><col style="width: 17.573%;" /><col style="width: 39.5393%;" /></colgroup><tbody><tr><th>Hdr <span style="color: rgb(255,0,0);">1</span></th><th><span style="color: rgb(0,0,0);">Hdr 2&nbsp;</span></th><th>Hdr 3</th><th><s>Hdr</s> 4</th><th><span style="color: rgb(255,0,0);">CHdr</span> 6</th></tr><tr><td rowspan="2">1</td><td rowspan="2"><p>Txt 2.1.1 <span style="color: rgb(255,0,0);">Ctxt 2.1.2</span>&nbsp;<strong>BTxt 2.1.3 </strong>&nbsp;NTxt 2.1.4</p></td><td>Td 3.1 <span style="color: rgb(255,0,0);">Ctd 3.1</span> LTxt 3/</td><td><span style="color: rgb(255,0,0);">CTxt 4.1.1</span> UTxt 4.1.2</td><td><br /></td></tr><tr><td rowspan="2"><p><span style="color: rgb(255,0,0);"><s>UCtxt 3..2.1</s></span> <s>UTxt 3.2.2 <strong>UBTxt 3.2.3</strong></s></p>Txt 3.1=строка</td><td><p><span style="color: rgb(255,0,0);"><strong>CTxt 4.2.1</strong></span>&nbsp;<ac:link><ri:page ri:content-title="Клиент Банка" /></ac:link><span style="color: rgb(204,153,255);">.<span style="color: rgb(255,0,0);">CTxt 4.2.3.</span></span></p></td><td><br /></td></tr><tr><td rowspan="2">2</td><td rowspan="2"><p><span style="color: rgb(204,153,255);"><span style="color: rgb(255,0,0);">Ctxt 2.2</span> <span style="color: rgb(0,0,0);">Txt 2.2.2</span></span></p><p><br /></p></td><td><span style="color: rgb(255,0,0);">Txt_4.3.1 <span style="color: rgb(0,0,0);">Txt_4.3.1</span></span></td><td><span style="color: rgb(255,0,0);">CTxt_6.3.1 <span style="color: rgb(0,0,0);">Txt_6.3.2</span></span></td></tr><tr><td><span style="color: rgb(204,153,255);"><span style="color: rgb(255,0,0);">Ctxt3.3=строка</span></span></td><td><p style="text-align: left;"><strong>BTxt 4.4.1&nbsp; <ac:link><ri:page ri:content-title="Клиент Банка" /></ac:link>.</strong> СTxt 4.3.2 <ac:link><ri:page ri:content-title="Клиент Банка" /></ac:link><span style="color: rgb(204,153,255);">.</span></p></td><td><p>CTxt6.4.1:</p><table data-mce-resize="false"><colgroup class=""><col class="" /><col class="" /><col class="" /></colgroup><tbody class=""><tr class=""><th>заг_1</th><th><span style="color: rgb(153,51,0);">заг_2</span></th><th><span style="color: rgb(0,0,0);">заг_3</span></th></tr><tr class=""><td><p>Вл_Txt_1_1 <span style="color: rgb(255,0,0);">Вл_Txt_1_2</span></p><p><strong><span style="color: rgb(0,0,0);">Вл_BTxt_1.1.3</span></strong></p><p><span style="color: rgb(255,0,0);"><strong><ac:link><ri:page ri:content-title="[ОНК] Страница 1" /></ac:link></strong></span></p></td><td rowspan="2"><p>Вл_Txt_2_1 <span style="color: rgb(255,0,0);"><strong><ac:link><ri:page ri:content-title="[ОНК] Страница 1" /></ac:link></strong></span></p><p><span style="color: rgb(255,0,0);">Вл_Txt_2_2</span></p>&nbsp;<strong>BTxt_2_3</strong></td><td><p>Вл_Txt_3_1</p></td></tr><tr class=""><td>Вл_Txt_1_2_2</td><td><p><span style="color: rgb(255,0,0);">Вл_Txt_3_2_1</span></p><p><strong>Вл_BTxt_3_2_2</strong></p></td></tr></tbody></table><p class="auto-cursor-target"><br /></p></td></tr></tbody></table><p class="auto-cursor-target"><br /></p>'''
+        html_content = '''<ac:layout><ac:layout-section ac:type="single"><ac:layout-cell><p class="auto-cursor-target"><strong>История изменений:</strong></p><table class="fixed-table wrapped"><colgroup><col style="width: 207.0px;" /><col style="width: 462.0px;" /><col style="width: 235.0px;" /><col style="width: 289.0px;" /></colgroup><tbody><tr><th>Дата</th><th>Описание</th><th>Автор</th><th>Задача в JIRA</th></tr><tr><td><div class="content-wrapper"><p><time datetime="2025-04-22" />&nbsp;</p></div></td><td><span style="color: rgb(0,204,255);">Переход на УФ v.2.2 и добавление групповой подписи заявок на выпуск карт</span></td><td><ac:link><ri:user ri:userkey="8a69e14184d815fe0185bb32d0520019" /></ac:link>&nbsp;</td><td><div class="content-wrapper"><p><ac:structured-macro ac:macro-id="b164f522-c530-40a4-b108-8dfe92da71c5" ac:name="jira" ac:schema-version="1"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-124016</ac:parameter></ac:structured-macro></p></div></td></tr><tr><td><div class="content-wrapper"><p><time datetime="2024-11-11" />&nbsp;</p></div></td><td><span style="color: rgb(0,51,102);">Перенос уведомления об успешном подписании в аналитику самой ЭФ</span></td><td><ac:link><ri:user ri:userkey="8a69e14184d815fe0185bb32d0520019" /></ac:link>&nbsp;</td><td><div class="content-wrapper"><p><ac:structured-macro ac:macro-id="d032460e-6a56-4848-9883-4066e7c16e47" ac:name="jira" ac:schema-version="1"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-104829</ac:parameter></ac:structured-macro></p></div></td></tr><tr><td><div class="content-wrapper"><p><time datetime="2024-04-19" />&nbsp;</p></div></td><td><span style="color: rgb(0,51,102);">Мапинг кода офиса выдачи</span></td><td><ac:link><ri:user ri:userkey="8a69e14184d815fe0185bb32d0520019" /></ac:link>&nbsp;</td><td><div class="content-wrapper"><p><ac:structured-macro ac:macro-id="88f13280-ea80-47be-b181-cea538b60a6d" ac:name="jira" ac:schema-version="1"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-80864</ac:parameter></ac:structured-macro></p></div></td></tr><tr><td><div class="content-wrapper"><p><time datetime="2023-08-01" />&nbsp;</p></div></td><td>Описан переход на <ac:link><ri:page ri:content-title="[ЭП] Логика работы универсальной функции электронной подписи v2.1" /></ac:link></td><td><ac:link><ri:user ri:userkey="8a69f5997f6454ef0180d1b149270055" /></ac:link>&nbsp;</td><td><div class="content-wrapper"><p><ac:structured-macro ac:macro-id="3817b2f0-9f2d-45e2-b3a0-d3457faf01ea" ac:name="jira" ac:schema-version="1"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-57388</ac:parameter></ac:structured-macro></p></div></td></tr><tr><td><div class="content-wrapper"><p><time datetime="2022-03-14" />&nbsp;</p></div></td><td>Описание функции</td><td><div class="content-wrapper"><p><ac:link><ri:user ri:userkey="8a69f44a7daffdab017dd86073010006" /></ac:link>&nbsp;</p></div></td><td><div class="content-wrapper"><p><ac:structured-macro ac:macro-id="e6ee63af-c475-4256-b8be-47b10a0dc0c8" ac:name="jira" ac:schema-version="1"><ac:parameter ac:name="server">Jira</ac:parameter><ac:parameter ac:name="columnIds">issuekey,summary,issuetype,created,updated,duedate,assignee,reporter,priority,status,resolution</ac:parameter><ac:parameter ac:name="columns">key,summary,type,created,updated,due,assignee,reporter,priority,status,resolution</ac:parameter><ac:parameter ac:name="serverId">d16f6246-3bab-3486-bdb2-a413c93ba7a0</ac:parameter><ac:parameter ac:name="key">GBO-21374</ac:parameter></ac:structured-macro></p></div></td></tr></tbody></table><p class="auto-cursor-target"><br /></p></ac:layout-cell></ac:layout-section><ac:layout-section ac:type="single"><ac:layout-cell><p class="auto-cursor-target"><strong>Описание функции:</strong></p><table class="fixed-table wrapped"><colgroup><col style="width: 207.0px;" /><col style="width: 990.0px;" /></colgroup><tbody><tr><td colspan="1"><strong>Доступность функции:</strong></td><td colspan="1"><p>Доступность функции зависит от:</p><ul><li>Роли пользователя (см. <ac:link><ri:page ri:content-title="[ЦРМ] Ролевая модель клиента" /></ac:link>).</li><li><span style="color: rgb(0,51,102);">От статуса заявки (см. </span><ac:link><ri:page ri:content-title="[КК_ВК] Функции Клиента" /></ac:link>).</li></ul></td></tr><tr><td><strong>Как вызывается функция:</strong></td><td><p style="text-align: left;"><span style="color: rgb(0,51,102);">Раздел &quot;Продукты&quot; &rarr; &quot;Корпоративные карты&quot; на ЭФ<span>&nbsp;</span><a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=353841">Основное окно сотрудника Клиента</a></span><span style="color: rgb(0,51,102);letter-spacing: 0.0px;">:</span></p><ul><li><span style="color: rgb(0,51,102);letter-spacing: 0.0px;">После нажатия кнопки &quot;Подписать и отправить&quot; с </span><span style="color: rgb(255,0,0);letter-spacing: 0.0px;"><ac:link><ri:page ri:content-title="[КК_Заявки] ЭФ Клиента &quot;Журнал заявок&quot;" /></ac:link> <span style="color: rgb(0,51,102);">(для выбранной заявки).</span></span></li><li><span style="letter-spacing: 0.0px;"><ac:link><ri:page ri:content-title="[КК_ВК] ЭФ Клиента: страница &quot;Подтверждение&quot;" ri:space-key="DBOCORPES" /><ac:plain-text-link-body><![CDATA[[КК_ВК] ЭФ Клиента: вкладка "Подтверждение"]]></ac:plain-text-link-body></ac:link>&nbsp;(при создании и редактировании заявки) &rarr; после нажатия кнопки &quot;Подписать и отправить&quot;.</span></li></ul></td></tr><tr><td colspan="1"><strong>Входящие параметры:</strong></td><td colspan="1"><p><span style="color: rgb(0,204,255);">Один из вариантов параметров:</span></p><ul style="text-align: left;"><li><span style="color: rgb(0,204,255);">Либо фильтр, примененный на <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=42675009">[КК_Заявки] ЭФ Клиента &quot;Фильтр журнала заявок&quot;</a></span></li><li><span style="color: rgb(0,204,255);">Либо массив,&nbsp;состоящий из</span><span> <ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /></ac:link></span><span>.&lt;</span><span style="color: rgb(23,43,77);">Идентификатор заявки&gt;<span style="color: rgb(0,204,255);"> <s>(обязательный)</s></span></span></li></ul></td></tr><tr><td><strong>Что делает функция:</strong></td><td><p style="text-align: left;"><span style="color: rgb(0,204,255);"><strong>Шаг №0</strong> (выполняется на бэке)<strong>. </strong>Инициализация справочных параметров:</span></p><ul><li><span style="color: rgb(0,204,255);">Для всех элементов массива <ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /><ac:plain-text-link-body><![CDATA[Заявка на выпуск карты и открытие счета]]></ac:plain-text-link-body></ac:link>.<ac:link><ri:page ri:content-title="[КК_ВК] Выпускаемая карта" /><ac:plain-text-link-body><![CDATA[Выпускаемая карта]]></ac:plain-text-link-body></ac:link> выполняется: </span><br /><span style="color: rgb(0,204,255);"><ac:link><ri:page ri:content-title="[КК_ВК] Выпускаемая карта" /></ac:link>.&lt;Код офиса выдачи&gt; = <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=328224" rel="nofollow">Подразделение Банка</a>.&lt;Код подразделения&gt; &rarr; <ac:link><ri:page ri:content-title="[КК_ВК] Выпускаемая карта" /><ac:plain-text-link-body><![CDATA[Выпускаемая карта]]></ac:plain-text-link-body></ac:link>.&lt;Ссылка на офис выдачи&gt;.</span></li></ul><p><span style="color: rgb(0,204,255);">Сохраняется заявки.</span></p><p><span style="color: rgb(0,204,255);">Осуществляется переход на шаг №1.</span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);"><strong>Шаг №1. Формирование массива индентификаторов заявок для работы.</strong></span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);">Создается временная переменная&nbsp;<u><em>Массив_идентификаторов</em></u>, которая инициализируется либо массивом идентификаторов, полученным во входящих параметрах, либо идентификаторами заявок, отобранными по условию фильтра, полученному во входящих параметрах.</span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);">Переход на шаг №2.</span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);"><strong>Шаг №2. Проверка количества подписываемых документов.</strong></span></p><p style="margin-left: 40.0px;text-align: left;"><span style="color: rgb(0,204,255);">Выполняется проверка на непревышение количества выбранных элементов&nbsp;в&nbsp;массиве:</span></p><ul style="text-align: left;"><li style="list-style-type: none;"><ul><li style="list-style-type: none;"><ul style="text-align: left;"><li><span style="color: rgb(0,204,255);"><strong>Если&nbsp;</strong>количество&nbsp;элементов в&nbsp;<u><em>Массив_идентификаторов</em></u> &le; <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=111261500">[Настраиваемые параметры] Корпоративные карты</a>.&lt;CC_att_issue_qty&gt;,&nbsp;<strong>то&nbsp;</strong>проверка пройдена и осуществляется переход на шаг №3,</span></li><li><span style="color: rgb(0,204,255);"><strong>иначе&nbsp;</strong>пользователю отображается модальное окно с текстом: &quot;Выберите не более %<a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=111261500">[Настраиваемые параметры] Корпоративные карты</a>.&lt;CC_att_issue_qty&gt;% заявок для подписи&quot; и кнопкой &quot;Понятно&quot;, при нажатии на которую процесс завершается.</span></li></ul></li></ul></li></ul><p style="text-align: left;"><span style="color: rgb(0,204,255);"><strong>Шаг №3. Проверка полномочий.</strong></span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);">Выполняется контроль <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=6364001" style="text-decoration: none;" rel="nofollow">Функция проверки в ЕСК наличия полномочий пользователя на подпись документа</a>&nbsp;для заявок с типом &quot;Заявка на выпуск карт и открытие счета&quot;.</span></p><ul style="text-align: left;"><li style="list-style-type: none;"><ul><li style="list-style-type: none;"><ul style="text-align: left;"><li><span style="color: rgb(0,204,255);"><strong>Если&nbsp;</strong>контроль пройден,&nbsp;<strong>то&nbsp;</strong>осуществляется переход на шаг №4,</span></li><li><span style="color: rgb(0,204,255);"><strong>иначе</strong>, пользователю отображается модальное окно с текстом ошибки из описания контроля, и кнопка &quot;Закрыть&quot; - при нажатии осуществляется переход на шаг №6.</span></li></ul></li></ul></li></ul><p style="text-align: left;"><span style="color: rgb(0,204,255);"><strong>Шаг №4</strong><strong>. Проверка статусов подписываемых документов.</strong></span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);">Выполняется проверка, что все заявки, идентификаторы которых входят в&nbsp;<u style="text-align: left;"><em>Массив_идентификаторов,</em></u>&nbsp;имеют статусы <ac:inline-comment-marker ac:ref="5ae2d171-1310-4e50-bba5-958f21d01361">NEW</ac:inline-comment-marker> или SIGN_REQUEST.</span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);">Если хотя бы одна заявка имеет другой статус, то пользователю показывается модальное окно с текстом:</span></p><ul><li style="text-align: left;"><span style="color: rgb(0,204,255);">если в <u style="text-align: left;"><em>Массив_идентификаторов </em></u></span><span style="color: rgb(0,204,255);letter-spacing: 0.0px;">только один элемент, то: &quot;Заявка должна быть в статусе <span style="color: rgb(0,204,255);">&quot;Новый&quot; и &quot;Ожидает подписи&quot;. Заявки в других статусах <ac:inline-comment-marker ac:ref="2a23d4a1-7d1b-4016-91f6-2f278c9fefe0">не требуют подписания.</ac:inline-comment-marker></span><ac:inline-comment-marker ac:ref="0363ba60-0e16-4410-90d7-72972aa57451">&quot; и кнопка &quot;К списку заявок&quot;. Далее выпол</ac:inline-comment-marker>няется <ac:inline-comment-marker ac:ref="ba0857e3-f0c1-4ac7-b944-a700f0e6fb8f">переход к Шагу</ac:inline-comment-marker> 8<ac:inline-comment-marker ac:ref="347fbb2e-f7c0-463e-9713-dc437bf3511c">.</ac:inline-comment-marker></span></li><li style="text-align: left;"><span style="color: rgb(0,204,255);">если в <u><em>Массив_идентификаторов</em></u> несколько элементов, то &quot;Подписание заявок X из Y. Будут подписаны заявки в статусах: &quot;Новый&quot; и &quot;Ожидает подписи&quot;. Заявки в других статусах не требуют подписания.&quot;</span></li></ul><p style="text-align: left;margin-left: 40.0px;"><span style="color: rgb(0,204,255);">Здесь X - количество заявок, имеющих статусы NEW или SIGN_REQUEST, а Y - общее количество выбранных пользователем заявок.</span></p><p style="text-align: left;margin-left: 40.0px;"><span style="color: rgb(0,204,255);">Действия пользователя:</span></p><ul style="text-align: left;"><li style="list-style-type: none;"><ul><li style="list-style-type: none;"><ul><li><span style="color: rgb(0,204,255);">&quot;Подписать и отправить&quot;:&nbsp;идентификаторы&nbsp;заявок, имеющих&nbsp;статус&nbsp;не равный NEW и SIGN_REQUEST исключаются из массива. Выполняется переход на шаг №5.</span></li><li><span style="color: rgb(0,204,255);">&quot;Отменить&quot;: процесс завершается и осуществляется переход на шаг №8</span></li></ul></li></ul></li></ul><p><span style="color: rgb(23,43,77);"><span style="color: rgb(0,51,102);"><strong>Шаг №<span style="color: rgb(0,204,255);">5<s>1</s></span></strong><span style="color: rgb(0,204,255);">. <strong>Подписание заявок с помощью Универсальной функции подписания.</strong></span></span></span></p><p><span style="color: rgb(23,43,77);"><span style="color: rgb(0,51,102);">Осуществляется вызов функции <ac:link><ri:page ri:content-title="[ЭП] Универсальная функция электронной подписи v2.2" /></ac:link><span style="color: rgb(0,204,255);">(нов)<s> <ac:link><ri:page ri:content-title="[ЭП] Универсальная функция электронной подписи v2.1" /></ac:link></s></span></span></span><span style="color: rgb(0,51,102);">.&nbsp;</span><span style="letter-spacing: 0.0px;"><span style="color: rgb(0,51,102);">Зап</span><ac:inline-comment-marker ac:ref="969704fa-ea13-4cb3-bdc4-493a076bd984">олнение параметров вызова функции описано</ac:inline-comment-marker><span style="color: rgb(0,51,102);"> в <ac:link><ri:page ri:content-title="[КК_ВК] Клиент: Параметры вызова универсальной функции электронной подписи v.2.2" ri:space-key="DBOCORPES" /></ac:link><span style="color: rgb(23,43,77);">&nbsp;</span><span style="color: rgb(0,204,255);">(нов)<s> </s></span></span><s><ac:link><ri:page ri:content-title="[КК_ВК] Клиент: Параметры вызова универсальной функции электронной подписи v.2.1" ri:space-key="DBOCORPES" /><ac:link-body><span style="color: rgb(0,204,255);">[КК_ВК] Клиент: Параметры вызова универсальной функции электронной подписи v.2.1</span>.</ac:link-body></ac:link></s></span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);">После выполнения функции осуществляется п<ac:inline-comment-marker ac:ref="83bf9c43-268a-450f-97c8-f6feada8888e">ереход на шаг №7</ac:inline-comment-marker>.</span></p><p><s><span style="color: rgb(0,204,255);"><strong>Если&nbsp;</strong>функция завершилась успешно&nbsp;(<ac:link><ri:page ri:content-title="[ЭП] Исходящие параметры функции подписи v2.1" /></ac:link>.&lt;Код завершения&gt; = 0),</span></s></p><ul><li style="text-align: left;"><s><span style="color: rgb(0,204,255);"><strong>то </strong>осуществляется переход на шаг №2,</span></s></li><li style="text-align: left;"><s><span style="color: rgb(0,204,255);"><strong>иначе </strong>осуществляется переход на шаг №3.</span></s></li></ul><p style="text-align: left;"><s><span style="color: rgb(0,204,255);"><strong>Шаг №2.</strong> Осуществляется сохранение данных о сформированной подписи<span style="letter-spacing: 0.0px;"> заявки на выпуск карты и открытие счета</span><span style="letter-spacing: 0.0px;">:</span></span></s></p><ul style="text-align: left;"><li><s><span style="color: rgb(0,204,255);"><ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /></ac:link>.&lt;<ac:inline-comment-marker ac:ref="0bfa0a3a-ce67-4c8f-aaa8-dcb3a8c460ea">Идентификатор пользователя, подписавшего заявку</ac:inline-comment-marker>&nbsp;&gt; =&nbsp;<a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=328234" style="text-decoration: none;color: rgb(0,204,255);">Текущий пользователь</a>.&lt;Идентификатор пользователя в экосистеме&gt;.</span></s></li><li><s><span style="color: rgb(0,204,255);"><ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /></ac:link>.&lt;ФИО пользователя, подписавшего заявку&gt; = <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=328234" style="text-decoration: none;color: rgb(0,204,255);">Текущий пользователь</a>.&lt;Фамилия&gt; + &quot; &quot; + &lt;Имя&gt; + &quot; &quot; + &lt;Отчество&gt;.</span></s></li><li><s><span style="color: rgb(0,204,255);"><ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /></ac:link>.&lt;Версия СПП&gt;&nbsp;=&nbsp;Версия СПП, использованная при подписи документа (см. <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=356307" style="color: rgb(0,204,255);" rel="nofollow">Справочник СПП</a>, раздел &quot;Логика формирования дайджеста для подписи&quot;).</span></s></li><li><s><span style="color: rgb(0,204,255);"><span style="letter-spacing: 0.0px;"><ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /></ac:link>.&lt;Реквизиты электронной подписи&gt;.&lt;Подпись&gt;</span><span style="letter-spacing: 0.0px;">:&nbsp;</span></span></s><br /><ul><li><s><span style="color: rgb(0,204,255);">&lt;<ac:inline-comment-marker ac:ref="fc4235c4-2def-41b4-a225-dd95964e6771">Дата подписи</ac:inline-comment-marker>&gt; = <ac:link><ri:page ri:content-title="[ЭП] Исходящие параметры функции подписи v2.1" /></ac:link>.&lt;Набор обработанных документов&gt;.<ac:inline-comment-marker ac:ref="67e74504-2fb0-4574-9056-82725f3b7f81">&lt;Набор подписанных данных&gt;.&lt;Дата и время подписи&gt;.</ac:inline-comment-marker></span></s></li><li><s><span style="color: rgb(0,204,255);">&lt;Сертификат ЭП&gt; =&nbsp;<ac:link><ri:page ri:content-title="[ЭП] Исходящие параметры функции подписи v2.1" /></ac:link>.&lt;Локальный идентификатор сертификата&gt;.</span></s></li><li><s><span style="color: rgb(0,204,255);">&lt;Электронная подпись&gt;&nbsp;= <ac:link><ri:page ri:content-title="[ЭП] Исходящие параметры функции подписи v2.1" /></ac:link>.&lt;Набор обработанных документов&gt;.<ac:inline-comment-marker ac:ref="824daf37-9b0d-4c5e-9e33-f9ff373db934">&lt;Набор подписанных данных&gt;.&lt;Значение подписи&gt;</ac:inline-comment-marker>.</span></s></li></ul></li><li><s><span style="color: rgb(0,204,255);"><ac:link><ri:page ri:content-title="[КК_ВК] Заявка на выпуск карты и открытие счета" /></ac:link>.&lt;Идентификатор ЕСК пользователя, подписавшего заявку&gt; = <a href="https://confluence.gboteam.ru/pages/viewpage.action?pageId=328234" style="text-decoration: none;color: rgb(0,204,255);" rel="nofollow">Текущий пользователь</a>.&lt;Идентификатор физического лица в ЕСК&gt;.</span></s></li></ul><p style="text-align: left;"><s><span style="color: rgb(0,204,255);">После выполнения сохранения подписей осуществляется переход <ac:inline-comment-marker ac:ref="258aedd1-9c4d-4e3d-99d2-70303c8c8a1f">на шаг </ac:inline-comment-marker><ac:inline-comment-marker ac:ref="258aedd1-9c4d-4e3d-99d2-70303c8c8a1f">№4.</ac:inline-comment-marker></span></s></p><p style="text-align: left;"><strong style="color: rgb(0,51,102);letter-spacing: 0.0px;"><ac:inline-comment-marker ac:ref="9426e08f-4642-4544-9c4a-a8164a80c7e5">Шаг №</ac:inline-comment-marker><span style="color: rgb(0,204,255);"><ac:inline-comment-marker ac:ref="9426e08f-4642-4544-9c4a-a8164a80c7e5">6</ac:inline-comment-marker><s>3</s></span>.</strong><span style="color: rgb(0,51,102);letter-spacing: 0.0px;"> </span><span style="color: rgb(0,51,102);letter-spacing: 0.0px;">Осуществляется отображение модального окна с текстом &quot;Не удалось подписать документ&quot;, при закрытии которого модальное окно закрывается и осуществляется переход на шаг №<span style="color: rgb(0,204,255);">8</span></span><s style="color: rgb(0,51,102);letter-spacing: 0.0px;"><span style="color: rgb(0,204,255);">4</span></s><span style="color: rgb(0,51,102);letter-spacing: 0.0px;">.</span></p><p style="text-align: left;"><span style="color: rgb(0,204,255);"><strong style="letter-spacing: 0.0px;">Шаг № 7. Информирование пользователя о статусе операции</strong></span></p><p style="margin-left: 40.0px;"><span style="color: rgb(0,204,255);">Если были успешно подписаны все заявки, у которых идентификаторы присутствуют в Массиве_идентификаторов</span></p><ul><li style="list-style-type: none;"><ul><li><span style="letter-spacing: 0.0px;color: rgb(0,204,255);">то осуществляется переход на шаг №8.</span></li><li><span style="color: rgb(0,204,255);">Иначе осуществляется отображение модального окна с текстом &quot;Остались неподписанные документы. Часть документов не была отправлена в банк. Попробуйте повторить операцию позже. Если ошибка не исчезнет, обратитесь в техподдержку по телефону 8 800 100 11 89&quot;. При закрытии модального окна осуществляется переход на шаг №8</span></li></ul></li></ul><p style="text-align: left;"><strong style="letter-spacing: 0.0px;">Шаг №<span style="color: rgb(0,204,255);">8<s>4</s></span>. </strong><span style="letter-spacing: 0.0px;">Завершение процесса.</span></p></td></tr><tr><td colspan="1"><strong style="text-align: left;">Англоязычное наименование (код привилегии):</strong></td><td colspan="1"><span style="color: rgb(0,0,0);">BC.CLIENT.<span style="color: rgb(0,51,102);">CARD.ISSUE.REQUEST.</span>SIGN</span></td></tr></tbody></table><p class="auto-cursor-target"><br /></p></ac:layout-cell></ac:layout-section></ac:layout>'''
 
         result = filter_approved_fragments(html_content)
 
