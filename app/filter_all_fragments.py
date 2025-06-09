@@ -4,6 +4,12 @@ import logging
 from typing import List
 from bs4 import BeautifulSoup, Tag, NavigableString
 import re
+import sys
+import io
+
+# Настройка кодировки для Windows консоли
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 
 def filter_all_fragments(html: str) -> str:
@@ -296,7 +302,24 @@ def filter_all_fragments(html: str) -> str:
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
+            # ===== ДОБАВЛЯЕМ ОБРАБОТКУ CONFLUENCE LAYOUT =====
+            elif element.name == "ac:layout":
+                # Обрабатываем layout контейнер
+                nested_parts = process_elements_sequentially(element)
+                result_parts.extend(nested_parts)
+
+            elif element.name == "ac:layout-section":
+                # Обрабатываем секцию layout
+                nested_parts = process_elements_sequentially(element)
+                result_parts.extend(nested_parts)
+
+            elif element.name == "ac:layout-cell":
+                # Обрабатываем ячейку layout
+                nested_parts = process_elements_sequentially(element)
+                result_parts.extend(nested_parts)
+
         return result_parts
+
 
     # Основная обработка
     all_fragments = process_elements_sequentially(soup)
