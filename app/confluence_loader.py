@@ -50,11 +50,14 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
             return None
 
         if clean_html:
-            content = confluence.get_page_by_id(page_id, expand='body.view')['body']['view']['value']
+            logging.debug("[get_page_content_by_id] clean_html started")
+            # content = confluence.get_page_by_id(page_id, expand='body.view')['body']['view']['value']
+            content = confluence.get_page_by_id(page_id, expand='body.storage')['body']['storage']['value']
+            logging.debug("[get_page_content_by_id] content from page '%d' = {%s}", page_id, content[:200] + "...")
             content = filter_all_fragments(content)
             logging.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
 
-        logging.info("[get_page_content_by_id] -> Content length: %d characters: {%s}", len(content), content)
+        logging.info("[get_page_content_by_id] -> Content length %d characters: {%s}", len(content), content)
         return content
     except Exception as e:
         logging.error("[get_page_content_by_id] Error fetching page_id=%s: %s", page_id, str(e))

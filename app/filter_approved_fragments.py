@@ -28,7 +28,7 @@ def filter_approved_fragments(html: str) -> str:
     """
     Извлекает подтвержденные фрагменты с гибридной разметкой (Markdown + HTML)
     """
-    logging.debug("[filter_approved_fragments] <- {%s}", html[:100]+"...")
+    logging.info("[filter_approved_fragments] <- {%s}", html[:300]+"...")
 
     if not html or not html.strip():
         return ""
@@ -662,7 +662,8 @@ def filter_approved_fragments(html: str) -> str:
     result = re.sub(r' +\.', '.', result)  # Убираем пробелы перед точками
     result = re.sub(r' +,', ',', result)  # Убираем пробелы перед запятыми
 
-    logging.debug("[filter_approved_fragments] -> {%s}", result)
+    logging.info("[filter_approved_fragments] -> {%s}", result[:300] + "...")
+
     return result.strip()
 
 

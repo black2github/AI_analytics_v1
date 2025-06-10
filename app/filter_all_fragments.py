@@ -10,9 +10,10 @@ import io
 
 def filter_all_fragments(html: str) -> str:
     """
-    Извлекает все фрагменты из HTML с гибридной разметкой (Markdown + HTML)
+    Извлекает все фрагменты из HTML возвращая их с гибридной разметкой (Markdown + HTML)
     без учета цвета элементов
     """
+    logging.info("[filter_all_fragments] <- {%s}", html[:200]+ "...")
     if not html or not html.strip():
         return ""
 
@@ -392,6 +393,8 @@ def filter_all_fragments(html: str) -> str:
     result = "\n\n".join(all_fragments)
     result = re.sub(r'\n\s*\n+', '\n\n', result)
     result = re.sub(r'[ \t]+', ' ', result)
+
+    logging.info("[filter_all_fragments] -> {%s}", result[:300] + "...")
 
     return result.strip()
 

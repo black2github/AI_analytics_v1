@@ -6,7 +6,7 @@ import sys
 def setup_logging():
     # Настройка логирования
     logging.basicConfig(
-        level=logging.INFO,  # Уровень логов (DEBUG и выше, включая ERROR)
+        level=logging.DEBUG,  # Уровень логов (DEBUG и выше, включая ERROR)
         format='%(asctime)s [%(levelname)s] %(filename)s: %(message)s',
         handlers=[
             logging.StreamHandler(),  # Вывод в консоль
