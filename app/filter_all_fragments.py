@@ -7,10 +7,6 @@ import re
 import sys
 import io
 
-# Настройка кодировки для Windows консоли
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 
 def filter_all_fragments(html: str) -> str:
     """
@@ -402,6 +398,12 @@ def filter_all_fragments(html: str) -> str:
 
 # Тестирование
 if __name__ == "__main__":
+
+    # Настройка кодировки для Windows консоли
+    if sys.platform == "win32":
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+
     def test_all_fragments():
         """Тест извлечения всех фрагментов"""
 

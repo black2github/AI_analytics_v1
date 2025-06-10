@@ -7,10 +7,6 @@ import re
 import sys
 import io
 
-# Настройка кодировки для Windows консоли
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 
 def is_strictly_black_color(color_value: str) -> bool:
     """Проверяет черный цвет и часть цветов из верхней строки редактора Confluence"""
@@ -162,7 +158,7 @@ def filter_approved_fragments(html: str) -> str:
             if isinstance(child, NavigableString):
                 continue
             elif isinstance(child, Tag):
-                # ===== ИСПРАВЛЕНИЕ: ПРОВЕРЯЕМ ЧЕРНЫЕ ЦВЕТА НАПРЯМУЮ =====
+                # ===== ПРОВЕРЯЕМ ЧЕРНЫЕ ЦВЕТА НАПРЯМУЮ =====
                 child_style = child.get("style", "").lower()
                 child_is_black = False
 
@@ -236,7 +232,6 @@ def filter_approved_fragments(html: str) -> str:
 
         # Если элемент сам имеет цветной стиль - ищем только черные дочерние элементы
         if has_colored_style(element):
-            # print(f"[DEBUG] Element {element.name} has colored style, delegating to colored container handler")
             return extract_black_elements_from_colored_container(element)
 
         # Элемент не имеет цветного стиля, но проверяем предков
@@ -673,6 +668,12 @@ def filter_approved_fragments(html: str) -> str:
 
 # Тестирование
 if __name__ == "__main__":
+
+    # Настройка кодировки для Windows консоли
+    if sys.platform == "win32":
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+
     def test_pointwise_fixes():
         """Тест точечных исправлений"""
 

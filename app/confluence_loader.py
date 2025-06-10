@@ -8,6 +8,7 @@ from atlassian import Confluence
 from bs4 import BeautifulSoup, Tag
 import markdownify
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
+from app.filter_all_fragments import filter_all_fragments
 from app.filter_approved_fragments import filter_approved_fragments
 
 if CONFLUENCE_BASE_URL is None:
@@ -49,23 +50,27 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
             return None
 
         if clean_html:
-            soup = BeautifulSoup(content, 'html.parser')
-            # Преобразуем таблицы в Markdown
-            for table in soup.find_all('table'):
-                table_md = markdownify.markdownify(str(table), heading_style="ATX")
-                # table_md = markdownify(str(table), heading_style="ATX")
-                table.replace_with(table_md)
-            # Извлекаем текст, сохраняя содержимое всех тегов
-            text_parts = []
-            for element in soup.find_all(['p', 'li', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                text = element.get_text(separator=' ', strip=True)
-                if text:
-                    text_parts.append(text)
-            # Добавляем Markdown-таблицы
-            for md_text in soup.find_all(text=True):
-                if md_text.strip().startswith('|'):
-                    text_parts.append(md_text.strip())
-            content = '\n'.join(text_parts)
+            # TODO: часть кода далее возвращает частичную кашу, без сохранения порядка, требуется исправление.
+            # soup = BeautifulSoup(content, 'html.parser')
+            # # Преобразуем таблицы в Markdown
+            # for table in soup.find_all('table'):
+            #     table_md = markdownify.markdownify(str(table), heading_style="ATX")
+            #     # table_md = markdownify(str(table), heading_style="ATX")
+            #     table.replace_with(table_md)
+            # # Извлекаем текст, сохраняя содержимое всех тегов
+            # text_parts = []
+            # for element in soup.find_all(['p', 'li', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            #     text = element.get_text(separator=' ', strip=True)
+            #     if text:
+            #         text_parts.append(text)
+            # # Добавляем Markdown-таблицы
+            # for md_text in soup.find_all(text=True):
+            #     if md_text.strip().startswith('|'):
+            #         text_parts.append(md_text.strip())
+            # content = '\n'.join(text_parts)
+
+            content = confluence.get_page_by_id(page_id, expand='body.view')['body']['view']['value']
+            content = filter_all_fragments(content)
             logging.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
 
         logging.info("[get_page_content_by_id] -> Content length: %d characters: {%s}", len(content), content)

@@ -30,6 +30,11 @@
     "platform": false
   },
   {
+    "code": "ONC",
+    "name": "[ОНК] Сервис Онлайн-кассы",
+    "platform": false
+  },
+  {
     "code": "CC",
     "name": "[КК] Корпоративные Карты",
     "platform": false
