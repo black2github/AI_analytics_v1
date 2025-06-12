@@ -87,75 +87,121 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
             ]
         }
 
-    logger.debug("[build_context] Using filters: %s", filters)
+    logger.debug("[build_context] Using service filters: %s", filters)
 
-    # # 0 ИЗВЛЕКАЕМ КЛЮЧЕВЫЕ ЗАПРОСЫ ИЗ АНАЛИЗИРУЕМЫХ ТРЕБОВАНИЙ
-    # search_query = None
-    # key_queries = None
-    # fallback_query = None
-    # if requirements_text.strip():
-    #     # Извлекаем ключевые запросы из анализируемых требований
-    #     key_queries = extract_key_queries(requirements_text)
-    #     if key_queries:
-    #         logger.debug("[build_context] %d queries extracted", len(key_queries))
-    #     else:
-    #         logging.warning("[build_context] No key queries extracted, using fallback search")
-    #         # Fallback: поиск по первым словам требований
-    #         fallback_query = " ".join(requirements_text.split()[:10])
-    # else:
-    #     logger.warning("[build_context] No requirements text provided, using basic filter search")
-    #     # Если нет текста требований - используем простую фильтрацию
-    #     search_query = ""
+    # 0 ИЗВЛЕКАЕМ КЛЮЧЕВЫЕ ЗАПРОСЫ ИЗ АНАЛИЗИРУЕМЫХ ТРЕБОВАНИЙ
+    dumb_query = "" # Если нет требований - используем простую фильтрацию
+    key_queries = None # Семантический поиск по каждому ключевому запросу
+    fallback_query = None # Fallback: поиск по первым словам требований
+
+    if requirements_text.strip():
+        # Извлекаем ключевые запросы из анализируемых требований
+        key_queries = extract_key_queries(requirements_text)
+        if key_queries:
+            logger.debug("[build_context] %d queries extracted", len(key_queries))
+        else:
+            logging.warning("[build_context] No key queries extracted, using fallback search")
+            # Fallback: поиск по первым словам требований
+            fallback_query = " ".join(requirements_text.split()[:10])
+    else:
+        logger.warning("[build_context] No requirements text provided, using basic filter search")
+        # Если нет текста требований - используем простую фильтрацию
+        dumb_query = ""
 
     # 1. СЕМАНТИЧЕСКИЙ ПОИСК ПО СЕРВИСНЫМ ТРЕБОВАНИЯМ
     service_docs = []
     service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
 
-    if requirements_text.strip():
-        # Извлекаем ключевые запросы из анализируемых требований
-        key_queries = extract_key_queries(requirements_text)
+    if key_queries:
+        logger.debug("[build_context] Using semantic search with %d queries", len(key_queries))
 
-        if key_queries:
-            logger.debug("[build_context] Using semantic search with %d queries", len(key_queries))
+        # Семантический поиск по каждому ключевому запросу
+        for query in key_queries:
+            try:
+                docs = service_store.similarity_search(
+                    query,
+                    k=3,  # Топ-3 наиболее релевантных документа
+                    filter=filters
+                )
+                service_docs.extend(docs)
+                logger.debug("[build_context] Query '%s' found %d docs", query, len(docs))
+            except Exception as e:
+                logging.warning("[build_context] Error searching for query '%s': %s", query, str(e))
 
-            # Семантический поиск по каждому ключевому запросу
-            for query in key_queries:
-                try:
-                    docs = service_store.similarity_search(
-                        query,
-                        k=3,  # Топ-3 наиболее релевантных документа
-                        filter=filters
-                    )
-                    service_docs.extend(docs)
-                    logger.debug("[build_context] Query '%s' found %d docs", query, len(docs))
-                except Exception as e:
-                    logging.warning("[build_context] Error searching for query '%s': %s", query, str(e))
-
-            # Удаляем дубликаты
-            service_docs = deduplicate_documents(service_docs)
-        else:
-            logging.warning("[build_context] No key queries extracted, using fallback search")
-            # Fallback: поиск по первым словам требований
-            fallback_query = " ".join(requirements_text.split()[:10])
-            service_docs = service_store.similarity_search(fallback_query, k=5, filter=filters)
+        # Удаляем дубликаты
+        service_docs = deduplicate_documents(service_docs)
+    elif fallback_query:
+        logging.warning("[build_context] No key queries extracted, using fallback search")
+        # Fallback: поиск по первым словам требований
+        service_docs = service_store.similarity_search(fallback_query, k=5, filter=filters)
     else:
-        logger.info("[build_context] No requirements text provided, using basic filter search")
+        logger.warning("[build_context] No requirements text provided, using basic filter search")
         # Если нет текста требований - используем простую фильтрацию
-        service_docs = service_store.similarity_search("", k=10, filter=filters)
+        service_docs = service_store.similarity_search(dumb_query, k=10, filter=filters)
+
     logger.debug("[build_context] Service context = {%s}", str(service_docs))
 
-    # 2. ПЛАТФОРМЕННЫЕ ТРЕБОВАНИЯ
+    # 2. СЕМАНТИЧЕСКИЙ ПОИСК ПО ПЛАТФОРМЕННЫМ ТРЕБОВАНИЯ
     platform_docs = []
     platform_services = get_platform_services()
     platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+    plat_docs = None
 
+    # поиск по всем платформенным сервисам
     for plat in platform_services:
-        try:
-            plat_docs = platform_store.similarity_search("", k=5, filter={"service_code": plat["code"]})
-            platform_docs.extend(plat_docs)
-        except Exception as e:
-            logging.warning("[build_context] Error loading platform service %s: %s", plat["code"], str(e))
+        # filters = {"service_code": plat["code"]}
+        filters = {"service_code": {"$eq": plat["code"]}}
+        if exclude_page_ids:
+            filters = {
+                "$and": [
+                    {"service_code": {"$eq": plat["code"]}},
+                    {"page_id": {"$nin": exclude_page_ids}}
+                ]
+            }
+        logger.debug("[build_context] Using platform filters: %s", filters)
+        if key_queries:
+            # Семантический поиск по каждому ключевому запросу
+            for query in key_queries:
+                try:
+                    plat_docs = platform_store.similarity_search(query, k=3, filter=filters)
+                    platform_docs.extend(plat_docs)
+                except Exception as e:
+                    logging.warning("[build_context] Error loading platform service %s: %s", plat["code"], str(e))
+
+                logger.debug("[build_context] Query '%s' found %d docs in platform service '%s'",
+                             query, len(plat_docs), plat["code"])
+
+        elif fallback_query:
+            # Fallback: поиск по первым словам требований по всем платформенным сервисам
+            try:
+                plat_docs = platform_store.similarity_search(fallback_query, k=5, filter=filters)
+                platform_docs.extend(plat_docs)
+            except Exception as e:
+                logging.warning("[build_context] Error loading platform service %s: %s", plat["code"], str(e))
+            logger.debug("[build_context] Query '%s' found %d docs in platform service '%s'",
+                         fallback_query, len(plat_docs), plat["code"])
+
+        else:
+            # Если нет текста требований - используем простую фильтрацию по всем платформенным сервисам
+            try:
+                plat_docs = platform_store.similarity_search(dumb_query, k=5, filter=filters)
+                platform_docs.extend(plat_docs)
+            except Exception as e:
+                logging.warning("[build_context] Error loading platform service %s: %s", plat["code"], str(e))
+            logger.debug("[build_context] Query '%s' found %d docs in platform service '%s'",
+                         dumb_query, len(plat_docs), plat["code"])
+
+    platform_docs = deduplicate_documents(platform_docs)
     logger.debug("[build_context] Platform context = {%s}", str(platform_docs))
+
+    # for plat in platform_services:
+    #     # поиск по всем платформенным сервисам
+    #     try:
+    #         plat_docs = platform_store.similarity_search("", k=5, filter={"service_code": plat["code"]})
+    #         platform_docs.extend(plat_docs)
+    #     except Exception as e:
+    #         logging.warning("[build_context] Error loading platform service %s: %s", plat["code"], str(e))
+    # logger.debug("[build_context] Platform context = {%s}", str(platform_docs))
 
     # 3. ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ ИЗ ССЫЛОК НЕПОДТВЕРЖДЕННЫХ ТРЕБОВАНИЙ
     linked_docs = []
@@ -242,58 +288,6 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
                  len(service_docs), len(platform_docs), len(linked_docs), len(context))
     logger.debug("[build_context] context = {%s}", context)
     return context
-
-# def build_semantic_context(requirements_text: str, service_code: str, exclude_page_ids: Optional[List[str]] = None):
-#     """Семантический поиск релевантных фрагментов"""
-#
-#     # 1. Извлекаем ключевые запросы из требований
-#     key_queries = extract_key_queries(requirements_text)
-#
-#     # 2. Семантический поиск по каждому запросу
-#     embeddings_model = get_embeddings_model()
-#     service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
-#
-#     relevant_docs = []
-#     for query in key_queries:
-#         # Семантический поиск с фильтрацией
-#         filters = {"service_code": {"$eq": service_code}}
-#         if exclude_page_ids:
-#             filters["page_id"] = {"$nin": exclude_page_ids}
-#
-#         docs = service_store.similarity_search(
-#             query,
-#             k=3,  # топ-3 наиболее релевантных
-#             filter=filters
-#         )
-#         relevant_docs.extend(docs)
-#
-#     return relevant_docs
-
-
-# def extract_key_queries(requirements_text: str) -> List[str]:
-#     """Извлекает ключевые слова и сущности с помощью LLM"""
-#
-#     prompt = """
-#     Проанализируй текст требований и извлеки:
-#     1. Ключевые слова (технические термины, названия компонентов)
-#     2. Сущности (справочники, API, методы, форматы данных)
-#     3. Бизнес-процессы и функции
-#
-#     Требования:
-#     {requirements}
-#
-#     Верни список из 5-10 ключевых запросов для поиска связанных требований:
-#     """
-#
-#     # Вызов LLM для извлечения
-#     chain = LLMChain(llm=get_llm(), prompt=PromptTemplate.from_template(prompt))
-#     result = chain.run(requirements=requirements_text)
-#
-#     # Парсинг результата в список
-#     queries = [q.strip() for q in result.split('\n') if q.strip()]
-#     return queries[:10]  # Ограничиваем количество
-
-# Добавить в app/rag_pipeline.py или app/semantic_search.py
 
 
 def _extract_confluence_links_from_element(element) -> List[str]:

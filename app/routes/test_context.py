@@ -8,6 +8,7 @@ from app.llm_interface import get_llm
 
 router = APIRouter(tags=["Тестирование LLM"])
 
+logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
 
 @router.get("/test_context_size", response_description="Результат тестирования максимального размера контекста для LLM")
 async def test_context_size(context_size: int):
@@ -19,7 +20,7 @@ async def test_context_size(context_size: int):
     Returns:
         JSON с результатом вызова LLM или сообщением об ошибке.
     """
-    logging.info("[test_context_size] ← context_size=%d", context_size)
+    logger.info("[test_context_size] ← context_size=%d", context_size)
 
     if context_size < 1:
         logging.error("[test_context_size] Invalid context_size: %d", context_size)
@@ -48,7 +49,7 @@ async def test_context_size(context_size: int):
         # Вызываем цепочку
         result = chain.run({"requirement": "Тест", "context": context})
 
-        logging.info("[test_context_size] → Success, result length: %d", len(str(result)))
+        logger.info("[test_context_size] → Success, result length: %d", len(str(result)))
         return {
             "status": "success",
             "context_size": len(context),

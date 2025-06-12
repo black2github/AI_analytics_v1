@@ -10,6 +10,8 @@ from app.service_registry import resolve_service_code_from_pages_or_user, is_pla
 from app.template_registry import store_templates
 import logging
 
+logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+
 router = APIRouter()
 
 class LoadRequest(BaseModel):
@@ -28,7 +30,7 @@ class RemovePagesRequest(BaseModel):
 
 @router.post("/load_pages", tags=["Загрузка Confluence страниц требований"])
 async def load_service_pages(payload: LoadRequest):
-    logging.info("[load_service_pages] <- page_ids={%s}, service_code={%s}", payload.page_ids, payload.service_code)
+    logger.info("[load_service_pages] <- page_ids={%s}, service_code={%s}", payload.page_ids, payload.service_code)
     try:
         service_code = payload.service_code
         if not payload.service_code:
@@ -53,7 +55,7 @@ async def load_service_pages(payload: LoadRequest):
         docs = prepare_documents_for_index(pages, service_code=service_code, source="confluence", doc_type="requirement")
         store.add_documents(docs)
 
-        logging.info("[load_service_pages] -> %d documents indexed for service {%s}", len(docs), service_code)
+        logger.info("[load_service_pages] -> %d documents indexed for service {%s}", len(docs), service_code)
         return {"message": f"{len(docs)} documents indexed for service '{service_code}'."}
     except Exception as e:
         logging.exception("Error in /load_pages")
@@ -62,10 +64,10 @@ async def load_service_pages(payload: LoadRequest):
 
 @router.post("/load_templates", tags=["Загрузка Confluence шаблонов страниц требований"])
 async def load_templates(payload: TemplateLoadRequest):
-    logging.info("load_templates <- dict={%s}", payload.templates)
+    logger.info("load_templates <- dict={%s}", payload.templates)
     try:
         result = store_templates(payload.templates)
-        logging.info("[load_templates] -> Templates loaded: %d", result)
+        logger.info("[load_templates] -> Templates loaded: %d", result)
         return {"message": f"Templates loaded: {result}"}
     except Exception as e:
         logging.exception("Error in /load_templates")
@@ -84,12 +86,12 @@ async def get_child_pages(page_id: str, service_code: str | None = None):
     Returns:
         JSON с списком идентификаторов дочерних страниц и, при наличии service_code, результатом их загрузки.
     """
-    logging.info("[get_child_pages] <- page_id={%s}, service_code={%s}", page_id, service_code)
+    logger.info("[get_child_pages] <- page_id={%s}, service_code={%s}", page_id, service_code)
     try:
         # Получение идентификаторов дочерних страниц
         child_page_ids = get_child_page_ids(page_id)
         if not child_page_ids:
-            logging.info("[get_child_pages] No child pages found for page_id={%s}", page_id)
+            logger.info("[get_child_pages] No child pages found for page_id={%s}", page_id)
             return {"page_ids": [], "load_result": None}
 
         result = {"page_ids": child_page_ids, "load_result": None}
@@ -102,7 +104,7 @@ async def get_child_pages(page_id: str, service_code: str | None = None):
             load_result = await load_service_pages(load_payload)
             result["load_result"] = load_result
 
-        logging.info("[get_child_pages] -> Found %d child pages for page_id={%s}, load_result=%s",
+        logger.info("[get_child_pages] -> Found %d child pages for page_id={%s}, load_result=%s",
                      len(child_page_ids), page_id, result["load_result"])
         return result
     except Exception as e:
@@ -119,10 +121,10 @@ def remove_service_fragments(page_ids: List[str]) -> int:
     Returns:
         Количество удаленных фрагментов.
     """
-    logging.info("[remove_service_fragments] ← page_ids=%s", page_ids)
+    logger.info("[remove_service_fragments] ← page_ids=%s", page_ids)
 
     if not page_ids:
-        logging.warning("[remove_service_fragments] Empty page_ids list provided")
+        logger.warning("[remove_service_fragments] Empty page_ids list provided")
         return 0
 
     try:
@@ -141,7 +143,7 @@ def remove_service_fragments(page_ids: List[str]) -> int:
         final_count = len(vectorstore.get()['ids'])
         deleted_count = initial_count - final_count
 
-        logging.info("[remove_service_fragments] → Deleted %d fragments for %d page_ids", deleted_count, len(page_ids))
+        logger.info("[remove_service_fragments] → Deleted %d fragments for %d page_ids", deleted_count, len(page_ids))
         return deleted_count
     except Exception as e:
         logging.error("[remove_service_fragments] Error deleting fragments for page_ids=%s: %s", page_ids, str(e))
@@ -159,11 +161,11 @@ async def remove_service_pages(request: RemovePagesRequest):
         JSON с количеством удаленных фрагментов.
     """
     page_ids = request.page_ids
-    logging.info("[remove_service_pages] ← page_ids=%s", page_ids)
+    logger.info("[remove_service_pages] ← page_ids=%s", page_ids)
 
     try:
         deleted_count = remove_service_fragments(page_ids)
-        logging.info("[remove_service_pages] → Success, deleted %d fragments", deleted_count)
+        logger.info("[remove_service_pages] → Success, deleted %d fragments", deleted_count)
         return {
             "status": "success",
             "deleted_count": deleted_count,
@@ -176,7 +178,7 @@ async def remove_service_pages(request: RemovePagesRequest):
 
 @router.post("/remove_platform_pages", response_description="Удаление фрагментов платформенных страниц")
 async def remove_platform_pages(request: RemovePagesRequest):
-    logging.info("[remove_platform_pages] <- page_ids=%s, service_code=%s", request.page_ids, request.service_code)
+    logger.info("[remove_platform_pages] <- page_ids=%s, service_code=%s", request.page_ids, request.service_code)
     try:
         if not request.service_code:
             return {"error": "service_code is required for platform pages"}
@@ -193,7 +195,7 @@ async def remove_platform_pages(request: RemovePagesRequest):
             ]
         })
         deleted_count = initial_count - len(vectorstore.get()['ids'])
-        logging.info("[remove_platform_pages] -> Success, deleted %d fragments", deleted_count)
+        logger.info("[remove_platform_pages] -> Success, deleted %d fragments", deleted_count)
         return {
             "status": "success",
             "deleted_count": deleted_count,

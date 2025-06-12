@@ -8,6 +8,8 @@ import logging
 from app.rag_pipeline import analyze_text, analyze_pages, analyze_with_templates
 from app.service_registry import is_valid_service
 
+logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+
 router = APIRouter()
 
 class AnalyzeTextRequest(BaseModel):
@@ -63,7 +65,7 @@ async def analyze_service_pages(payload: AnalyzePagesRequest):
 
 @router.post("/analyze_service_pages/{code}", tags=["Анализ существующих (ранее) требований конкретного сервиса"])
 async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
-    logging.info("[analyze_service_pages] <- code=%s", code)
+    logger.info("[analyze_service_pages] <- code=%s", code)
     if not is_valid_service(code):
         return {"error": f"Сервис с кодом {code} не найден"}
 
@@ -73,7 +75,7 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
             prompt_template=payload.prompt_template,
             service_code=code
         )
-        logging.info("[analyze_service_pages] -> result={%s}", result)
+        logger.info("[analyze_service_pages] -> result={%s}", result)
         return {"results": result}
     except Exception as e:
         logging.exception("Ошибка в /analyze_service_pages")
@@ -82,14 +84,14 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
 
 @router.post("/analyze_with_templates", tags=["Анализ новых требований сервиса и их оформления"])
 async def analyze_with_templates_route(payload: AnalyzeWithTemplatesRequest):
-    logging.info("[analyze_with_templates] <- payload=%s", payload)
+    logger.info("[analyze_with_templates] <- payload=%s", payload)
     try:
         result = analyze_with_templates(
             items=payload.items,
             prompt_template=payload.prompt_template,
             service_code=payload.service_code
         )
-        logging.info("[analyze_with_templates] -> result={%s}", result)
+        logger.info("[analyze_with_templates] -> result={%s}", result)
         return {"results": result}
     except Exception as e:
         logging.exception("Ошибка в /analyze_with_templates")

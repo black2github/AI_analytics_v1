@@ -7,6 +7,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
 from app.config import CHROMA_PERSIST_DIR, EMBEDDING_MODEL, EMBEDDING_PROVIDER, OPENAI_API_KEY
 
+logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
 
 def get_vectorstore(collection_name: str, embedding_model: Embeddings = None) -> Chroma:
     if embedding_model is None:
@@ -60,5 +61,5 @@ def get_embedding_model(name: str = EMBEDDING_MODEL) -> Embeddings:
         test = model.embed_query("test")
         dim = len(test)
 
-    logging.info("[embedding_store] Using embedding model: {%s}, dimension: {%s}", name, dim)
+    logger.info("[embedding_store] Using embedding model: {%s}, dimension: {%s}", name, dim)
     return model

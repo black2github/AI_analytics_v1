@@ -8,6 +8,8 @@ import logging
 
 from app.config import APP_VERSION
 
+logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+
 # Время старта приложения
 START_TIME = time.time()
 
@@ -31,7 +33,7 @@ def get_info():
         uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     # Логирование вызова эндпоинта
-    logging.info("Info endpoint called, uptime: %s", uptime_str)
+    logger.info("Info endpoint called, uptime: %s", uptime_str)
 
     return {
         "app": "requirements-analyzer",

@@ -1,11 +1,8 @@
 # app/confluence_loader.py
 
 import logging
-from copy import deepcopy
-from types import NoneType
 from typing import List, Dict, Optional
 from atlassian import Confluence
-from bs4 import BeautifulSoup, Tag
 import markdownify
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
 from app.filter_all_fragments import filter_all_fragments
@@ -20,6 +17,8 @@ confluence = Confluence(
     password=CONFLUENCE_PASSWORD
 )
 
+logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+
 try:
     from markdownify import markdownify as markdownify_fn
 except ImportError:
@@ -33,7 +32,7 @@ def extract_approved_fragments(html: str) -> str:
     Фильтрация идёт по стилю родительского блока, не по вложенным тегам.
     Если родитель — цветной (нечёрный), всё внутри удаляется.
     """
-    logging.debug("[extract_approved_fragments] <- html={%s}", html)
+    logger.debug("[extract_approved_fragments] <- html={%s}", html)
     return filter_approved_fragments(html)
 
 
@@ -41,7 +40,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[str]:
     """Получает содержимое страницы Confluence по её ID."""
-    logging.info("[get_page_content_by_id] <- page_id=%s, clean_html=%s", page_id, clean_html)
+    logger.info("[get_page_content_by_id] <- page_id=%s, clean_html=%s", page_id, clean_html)
     try:
         page = confluence.get_page_by_id(page_id, expand='body.storage')
         content = page.get('body', {}).get('storage', {}).get('value', '')
@@ -50,14 +49,14 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
             return None
 
         if clean_html:
-            logging.debug("[get_page_content_by_id] clean_html started")
+            logger.debug("[get_page_content_by_id] clean_html started")
             # content = confluence.get_page_by_id(page_id, expand='body.view')['body']['view']['value']
             content = confluence.get_page_by_id(page_id, expand='body.storage')['body']['storage']['value']
-            logging.debug("[get_page_content_by_id] content from page '%d' = {%s}", page_id, content[:200] + "...")
+            logger.debug("[get_page_content_by_id] content from page '%d' = {%s}", page_id, content[:200] + "...")
             content = filter_all_fragments(content)
-            logging.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
+            logger.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
 
-        logging.info("[get_page_content_by_id] -> Content length %d characters: {%s}", len(content), content)
+        logger.info("[get_page_content_by_id] -> Content length %d characters: {%s}", len(content), content)
         return content
     except Exception as e:
         logging.error("[get_page_content_by_id] Error fetching page_id=%s: %s", page_id, str(e))
@@ -65,10 +64,10 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
 
 
 def get_page_title_by_id(page_id: str) -> Optional[str]:
-    logging.debug("[get_page_title_by_id] <- page_id=%s", page_id)
+    logger.debug("[get_page_title_by_id] <- page_id=%s", page_id)
     try:
         result = confluence.get_page_by_id(page_id, expand='title')
-        logging.debug("[get_page_title_by_id] -> Result: %s", result)
+        logger.debug("[get_page_title_by_id] -> Result: %s", result)
         return result.get("title", "")
     except Exception as e:
         logging.warning("Ошибка при получении содержимого страницы {%s}: {%s}", page_id, e)
@@ -82,7 +81,7 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
     :param page_ids: список идентификаторов страниц для загрузки.
     :return:
     """
-    logging.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
+    logger.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
     pages = []
     for page_id in page_ids:
         title = get_page_title_by_id(page_id)
@@ -101,7 +100,7 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
             "approved_content": approved_md
         })
 
-    logging.info("[load_pages_by_ids] -> Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
+    logger.info("[load_pages_by_ids] -> Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
     return pages
 
 
@@ -128,14 +127,14 @@ def get_child_page_ids(page_id: str) -> List[str]:
 
     def fetch_children(current_page_id: str):
         """Рекурсивно собирает идентификаторы дочерних страниц."""
-        logging.debug("[fetch_children] <- current_page_id={%s}", current_page_id)
+        logger.debug("[fetch_children] <- current_page_id={%s}", current_page_id)
         try:
             # Получение дочерних страниц через Confluence API
             children = confluence.get_child_pages(current_page_id)
             for child in children:
                 child_id = child["id"]
                 child_page_ids.append(child_id)
-                logging.debug("[get_child_page_ids] Found child page: %s for parent: %s", child_id, current_page_id)
+                logger.debug("[get_child_page_ids] Found child page: %s for parent: %s", child_id, current_page_id)
                 # Рекурсивный вызов для вложенных страниц
                 fetch_children(child_id)
         except Exception as e:

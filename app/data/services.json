@@ -1,4 +1,14 @@
 [
+   {
+    "code": "roleModel",
+    "name": "[ЦРМ] Роли и Ролевая модель (Концепция)",
+    "platform": true
+  },
+  {
+    "code": "dataModel",
+    "name": "Модель данных",
+    "platform": true
+  },
   {
     "code": "UAA",
     "name": "[UAA] Сервис аутентификации и авторизации",
