@@ -188,8 +188,8 @@ def filter_approved_fragments(html: str) -> str:
                     if child_text:
                         approved_parts.append(child_text)
 
+        # ИСПРАВЛЕНО: Соединяем БЕЗ лишних пробелов
         return "".join(approved_parts)
-
 
     def extract_approved_text(element) -> str:
         """Извлекает только подтвержденный текст из элемента"""
@@ -257,8 +257,8 @@ def filter_approved_fragments(html: str) -> str:
                 if child_text:  # Здесь тоже не делаем strip()!
                     result_parts.append(child_text)
 
-        # Соединяем БЕЗ дополнительных пробелов
-        result = "".join(result_parts)
+        # ИСПРАВЛЕНО: Соединяем БЕЗ дополнительных пробелов
+        result = "".join(result_parts)  # Это правильно
 
         # Убираем только множественные пробелы, но сохраняем исходную структуру
         result = re.sub(r'[ \t]+', ' ', result)
@@ -436,19 +436,31 @@ def filter_approved_fragments(html: str) -> str:
                     text = str(child).strip()
                     if text:
                         approved_parts.append(text)
-            return " ".join(approved_parts)
+            # ✅ ИСПРАВЛЕНО: Убираем лишние пробелы
+            return "".join(approved_parts)  # Было " ".join(approved_parts)
 
         # ИСПРАВЛЕНИЕ: Убираем проверку цветных предков для вложенных таблиц
         # Это позволит обрабатывать черные ссылки в цветных ячейках
 
-        # Рекурсивно обрабатываем дочерние элементы
-        child_texts = []
+        # ИСПРАВЛЕНИЕ: Рекурсивно обрабатываем дочерние элементы БЕЗ ЛИШНИХ ПРОБЕЛОВ
+        result_parts = []
         for child in element.children:
-            child_text = extract_approved_text_for_nested_table(child)
-            if child_text.strip():
-                child_texts.append(child_text.strip())
+            if isinstance(child, NavigableString):
+                text = str(child)
+                if text:
+                    result_parts.append(text)
+            elif isinstance(child, Tag):
+                child_text = extract_approved_text_for_nested_table(child)
+                if child_text:
+                    result_parts.append(child_text)
 
-        return " ".join(child_texts)
+        # ✅ ИСПРАВЛЕНО: Соединяем БЕЗ лишних пробелов
+        result = "".join(result_parts)  # Было " ".join(child_texts)
+
+        # Нормализуем пробелы
+        result = re.sub(r'[ \t]+', ' ', result)
+
+        return result.strip()
 
     def process_table(table: Tag) -> str:
         """Обрабатывает таблицу с гибридной разметкой"""

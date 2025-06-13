@@ -66,14 +66,29 @@ def filter_all_fragments(html: str) -> str:
             else:
                 return ""
 
-        # Рекурсивно обрабатываем дочерние элементы
-        child_texts = []
-        for child in element.children:
-            child_text = extract_all_text(child)
-            if child_text.strip():
-                child_texts.append(child_text.strip())
+        # ИСПРАВЛЕНИЕ: Более точная обработка БЕЗ ЛИШНИХ ПРОБЕЛОВ
+        result_parts = []
 
-        return " ".join(child_texts)
+        for child in element.children:
+            if isinstance(child, NavigableString):
+                # Текстовый узел - сохраняем как есть (включая пробелы)
+                text = str(child)
+                if text:  # Не делаем strip() здесь!
+                    result_parts.append(text)
+            elif isinstance(child, Tag):
+                # Для тегов извлекаем содержимое рекурсивно
+                child_text = extract_all_text(child)
+                if child_text:  # Здесь тоже не делаем strip()!
+                    result_parts.append(child_text)
+
+        # ИСПРАВЛЕНИЕ: Соединяем БЕЗ дополнительных пробелов
+        result = "".join(result_parts)  # Было " ".join() - исправлено на "".join()
+
+        # Убираем только множественные пробелы, но сохраняем исходную структуру
+        result = re.sub(r'[ \t]+', ' ', result)
+
+        return result.strip()  # strip() только в самом конце
+
 
     def process_table_cell(cell, is_nested=False):
         """Обрабатывает содержимое ячейки таблицы"""
@@ -113,9 +128,9 @@ def filter_all_fragments(html: str) -> str:
             if text_after.strip():
                 result_parts.append(text_after.strip())
 
-            return " ".join(result_parts)
+            return "".join(result_parts) # TODO " " -> "" ?
         else:
-            # ===== ИСПРАВЛЕНИЕ: ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
+            # ===== ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
             # Ячейка без вложенной таблицы - проверяем наличие списков
             lists = cell.find_all(["ul", "ol"], recursive=False)
 
@@ -217,14 +232,25 @@ def filter_all_fragments(html: str) -> str:
             else:
                 return ""
 
-        # Рекурсивно обрабатываем дочерние элементы
-        child_texts = []
+        # ИСПРАВЛЕНИЕ: Рекурсивно обрабатываем дочерние элементы БЕЗ ЛИШНИХ ПРОБЕЛОВ
+        result_parts = []
         for child in element.children:
-            child_text = extract_all_text_for_nested_table(child)
-            if child_text.strip():
-                child_texts.append(child_text.strip())
+            if isinstance(child, NavigableString):
+                text = str(child)
+                if text:
+                    result_parts.append(text)
+            elif isinstance(child, Tag):
+                child_text = extract_all_text_for_nested_table(child)
+                if child_text:
+                    result_parts.append(child_text)
 
-        return " ".join(child_texts)
+        # ИСПРАВЛЕНИЕ: Соединяем БЕЗ пробелов
+        result = "".join(result_parts)  # Было " ".join() - исправлено на "".join()
+
+        # Нормализуем пробелы
+        result = re.sub(r'[ \t]+', ' ', result)
+
+        return result.strip()
 
     def process_table(table: Tag) -> str:
         """Обрабатывает таблицу с гибридной разметкой"""
@@ -424,5 +450,31 @@ if __name__ == "__main__":
         print(result)
         print("=" * 80)
 
+
+    def test_link_spacing_fix():
+        """Тест исправления лишних пробелов в ссылках"""
+
+        html = '''
+        <span style="color: rgb(0,0,0);">
+            <span style="color: rgb(0,51,102);">
+                <a href="/pages/viewpage.action?pageId=42670178">[КК_БК] Заявка на блокировку карты</a>
+            </span>,
+        </span>
+        '''
+
+        result = filter_all_fragments(html)
+        print(f"Результат: '{result}'")
+
+        # Проверяем, что нет лишних пробелов
+        assert result.strip() == "[[КК_БК] Заявка на блокировку карты],"
+        # Не должно быть: "- [[КК_БК] Заявка на блокировку карты] ,"
+
+        print("✅ Тест прошел! Лишние пробелы убраны.")
+
+
+    if __name__ == "__main__":
+
+        test_link_spacing_fix()
+
     # Запускаем тест
-    test_all_fragments()
+    # test_all_fragments()

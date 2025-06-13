@@ -29,3 +29,19 @@ docker-compose.override.yml
 .vscode/
 .idea/
 chroma/
+
+# Test coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Other test artifacts
+.tox/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
