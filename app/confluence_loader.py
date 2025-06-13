@@ -7,6 +7,7 @@ import markdownify
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
 from app.filter_all_fragments import filter_all_fragments
 from app.filter_approved_fragments import filter_approved_fragments
+from app.history_cleaner import remove_history_sections
 
 if CONFLUENCE_BASE_URL is None:
     raise ValueError("Переменная окружения CONFLUENCE_BASE_URL не задана")
@@ -48,15 +49,16 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
             logging.warning("[get_page_content_by_id] No content found for page_id=%s", page_id)
             return None
 
+        # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ
+        content = remove_history_sections(content)
+        logger.debug("[get_page_content_by_id] Removed history sections")
+
         if clean_html:
             logger.debug("[get_page_content_by_id] clean_html started")
-            # content = confluence.get_page_by_id(page_id, expand='body.view')['body']['view']['value']
-            content = confluence.get_page_by_id(page_id, expand='body.storage')['body']['storage']['value']
-            logger.debug("[get_page_content_by_id] content from page '%d' = {%s}", page_id, content[:200] + "...")
             content = filter_all_fragments(content)
             logger.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
 
-        logger.info("[get_page_content_by_id] -> Content length %d characters: {%s}", len(content), content)
+        logger.info("[get_page_content_by_id] -> Content length %d characters", len(content))
         return content
     except Exception as e:
         logging.error("[get_page_content_by_id] Error fetching page_id=%s: %s", page_id, str(e))
@@ -124,9 +126,17 @@ def get_child_page_ids(page_id: str) -> List[str]:
         Exception: Если доступ к странице невозможен или произошла ошибка API.
     """
     child_page_ids = []
+    visited_pages = set()  # ДОБАВЛЯЕМ защиту от циклов
 
     def fetch_children(current_page_id: str):
         """Рекурсивно собирает идентификаторы дочерних страниц."""
+        # ДОБАВЛЯЕМ защиту от бесконечной рекурсии
+        if current_page_id in visited_pages:
+            logger.warning("[fetch_children] Circular reference detected for page_id=%s", current_page_id)
+            return
+
+        visited_pages.add(current_page_id)
+
         logger.debug("[fetch_children] <- current_page_id={%s}", current_page_id)
         try:
             # Получение дочерних страниц через Confluence API

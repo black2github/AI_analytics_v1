@@ -30,6 +30,10 @@ class RemovePagesRequest(BaseModel):
 
 @router.post("/load_pages", tags=["Загрузка Confluence страниц требований"])
 async def load_service_pages(payload: LoadRequest):
+    """
+    ИСПРАВЛЕНО: Загружает ТОЛЬКО подтвержденные требования в векторное хранилище.
+    Согласно постановке задачи, в хранилище должны быть только подтвержденные требования.
+    """
     logger.info("[load_service_pages] <- page_ids={%s}, service_code={%s}", payload.page_ids, payload.service_code)
     try:
         service_code = payload.service_code
@@ -40,26 +44,106 @@ async def load_service_pages(payload: LoadRequest):
 
         collection_name = "platform_context" if is_platform_service(service_code) else "service_pages"
 
+        # ЗАГРУЖАЕМ СТРАНИЦЫ С ПОДТВЕРЖДЕННЫМ СОДЕРЖИМЫМ
         pages = load_pages_by_ids(payload.page_ids)
         if not pages:
             return {"error": "No pages found."}
 
+        # ФИЛЬТРУЕМ СТРАНИЦЫ С ПОДТВЕРЖДЕННЫМ СОДЕРЖИМЫМ
+        pages_with_approved_content = []
+        for page in pages:
+            approved_content = page.get("approved_content", "")
+            if approved_content and approved_content.strip():
+                pages_with_approved_content.append(page)
+                logger.debug("[load_service_pages] Page %s has approved content (%d chars)",
+                             page["id"], len(approved_content))
+            else:
+                logger.warning("[load_service_pages] Page %s has no approved content, skipping", page["id"])
+
+        if not pages_with_approved_content:
+            return {"error": "No pages with approved content found."}
+
         embeddings_model = get_embeddings_model()
         store = get_vectorstore(collection_name, embedding_model=embeddings_model)
 
+        # УДАЛЯЕМ ПРЕДЫДУЩИЕ ФРАГМЕНТЫ ЭТИХ СТРАНИЦ (сохраняем логику)
+        page_ids_to_delete = [p["id"] for p in pages_with_approved_content]
         try:
-            store.delete(ids=[p["id"] for p in pages])
+            # Используем where фильтр для более точного удаления
+            store.delete(where={"page_id": {"$in": page_ids_to_delete}})
+            logger.debug("[load_service_pages] Deleted existing fragments for page_ids: %s", page_ids_to_delete)
         except Exception as e:
             logging.warning("Could not delete existing vectors: {%s}", e)
 
-        docs = prepare_documents_for_index(pages, service_code=service_code, source="confluence", doc_type="requirement")
+        # СОЗДАЕМ ДОКУМЕНТЫ ТОЛЬКО ИЗ ПОДТВЕРЖДЕННОГО СОДЕРЖИМОГО
+        docs = prepare_documents_for_approved_content(
+            pages_with_approved_content,
+            service_code=service_code,
+            source="confluence",
+            doc_type="requirement"
+        )
+
+        if not docs:
+            return {"error": "No documents created from approved content."}
+
         store.add_documents(docs)
 
-        logger.info("[load_service_pages] -> %d documents indexed for service {%s}", len(docs), service_code)
-        return {"message": f"{len(docs)} documents indexed for service '{service_code}'."}
+        logger.info("[load_service_pages] -> %d documents indexed for service {%s} (only approved content)",
+                    len(docs), service_code)
+        return {
+            "message": f"{len(docs)} documents indexed for service '{service_code}' (approved content only).",
+            "total_pages": len(payload.page_ids),
+            "pages_with_approved_content": len(pages_with_approved_content),
+            "documents_created": len(docs)
+        }
     except Exception as e:
         logging.exception("Error in /load_pages")
         return {"error": str(e)}
+
+
+def prepare_documents_for_approved_content(
+        pages: list,
+        service_code: str | None = None,
+        source: str = "confluence",
+        doc_type: str = "requirement",
+        enrich_with_type: bool = False
+) -> list:
+    """
+    НОВАЯ ФУНКЦИЯ: Создает документы ТОЛЬКО из подтвержденного содержимого страниц.
+    Это гарантирует, что в векторное хранилище попадают только подтвержденные требования.
+    """
+    from langchain_core.documents import Document
+
+    docs = []
+    for page in pages:
+        # ИСПОЛЬЗУЕМ ТОЛЬКО ПОДТВЕРЖДЕННОЕ СОДЕРЖИМОЕ
+        approved_content = page.get("approved_content", "")
+        if not approved_content or not approved_content.strip():
+            logger.warning("[prepare_documents_for_approved_content] No approved content for page %s", page.get("id"))
+            continue
+
+        metadata = {
+            "page_id": page["id"],
+            "title": page["title"],
+            "source": source,
+            "type": doc_type,
+            "content_type": "approved_only"  # Маркер, что это только подтвержденное содержимое
+        }
+
+        if service_code:
+            metadata["service_code"] = service_code
+        if enrich_with_type and "title" in page:
+            metadata["requirement_type"] = page["title"].replace("Template: ", "").strip()
+
+        # СОЗДАЕМ ДОКУМЕНТ ТОЛЬКО ИЗ ПОДТВЕРЖДЕННОГО СОДЕРЖИМОГО
+        doc = Document(page_content=approved_content.strip(), metadata=metadata)
+        docs.append(doc)
+
+        logger.debug("[prepare_documents_for_approved_content] Created doc for page %s (%d chars approved content)",
+                     page["id"], len(approved_content))
+
+    logger.info("[prepare_documents_for_approved_content] -> Created %d documents from approved content", len(docs))
+    return docs
 
 
 @router.post("/load_templates", tags=["Загрузка Confluence шаблонов страниц требований"])

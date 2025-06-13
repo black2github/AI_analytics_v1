@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup, Tag, NavigableString
 import re
 import sys
 import io
+from app.history_cleaner import remove_history_sections
 
 logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
 
@@ -48,6 +49,9 @@ def filter_approved_fragments(html: str) -> str:
 
     if not html or not html.strip():
         return ""
+
+    # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ В НАЧАЛЕ
+    html = remove_history_sections(html)
 
     soup = BeautifulSoup(html, "html.parser")
 
