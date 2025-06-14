@@ -153,15 +153,18 @@ def _batch_similarity_search(store_name: str, queries: List[str], filters: dict,
     store = get_vectorstore(store_name, embedding_model=embeddings_model)
     all_docs = []
 
-    logger.debug("[_batch_similarity_search] Searching %s with %d queries", store_name, len(queries))
+    # ДОБАВИТЬ ЛОГИРОВАНИЕ ФИЛЬТРОВ ДЛЯ СРАВНЕНИЯ
+    logger.debug("[_batch_similarity_search] Store: %s, Filter: %s", store_name, filters)
 
     for query in queries:
         try:
             docs = store.similarity_search(query, k=k_per_query, filter=filters)
             all_docs.extend(docs)
-            logger.debug("[_batch_similarity_search] Query '%s' found %d docs", query[:50], len(docs))
+            logger.debug("[_batch_similarity_search] Store: %s, Query '%s' found %d docs",
+                        store_name, query[:50], len(docs))
         except Exception as e:
-            logger.warning("[_batch_similarity_search] Error searching '%s': %s", query[:50], str(e))
+            logger.error("[_batch_similarity_search] Store: %s, Error searching '%s': %s",
+                        store_name, query[:50], str(e))
 
     return all_docs
 
@@ -175,36 +178,83 @@ def _batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[s
         return []
 
     platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+
+    try:
+        collection_data = platform_store.get()
+        total_docs = len(collection_data.get('ids', []))
+        logger.debug("[_batch_platform_search] Platform collection contains %d documents", total_docs)
+
+        #  ДИАГНОСТИКА: Проверяем структуру метаданных
+        if collection_data.get('metadatas'):
+            sample_metadata = collection_data['metadatas'][:5]
+            logger.debug("[_batch_platform_search] Sample metadata: %s", sample_metadata)
+
+            # Проверяем service_code в данных
+            service_codes_in_data = set()
+            for metadata in collection_data['metadatas'][:100]:  # Проверяем первые 100
+                if metadata and 'service_code' in metadata:
+                    service_codes_in_data.add(metadata['service_code'])
+
+            logger.debug("[_batch_platform_search] Service codes in data: %s", sorted(service_codes_in_data))
+
+        if total_docs == 0:
+            logger.warning("[_batch_platform_search] Platform collection is empty")
+            return []
+
+    except Exception as e:
+        logger.error("[_batch_platform_search] Error accessing platform collection: %s", str(e))
+        return []
+
     all_platform_docs = []
-
-    # Создаем один фильтр для всех платформенных сервисов
     platform_codes = [svc["code"] for svc in platform_services]
-    logger.debug("[_batch_platform_search] Searching in platform services: %s", platform_codes)
+    logger.debug("[_batch_platform_search] Platform codes: %s", platform_codes)
+    # logger.debug("[_batch_platform_search] Searching in platform services: %s", platform_codes)
 
-    base_filter = {"service_code": {"$in": platform_codes}}
-    if exclude_page_ids:
-        filters = {
-            "$and": [
-                base_filter,
-                {"page_id": {"$nin": exclude_page_ids}}
-            ]
-        }
-    else:
-        filters = base_filter
-
-    # Один запрос вместо цикла по каждому сервису
+    #  ТЕСТИРУЕМ РАЗНЫЕ СТРАТЕГИИ ФИЛЬТРАЦИИ
     for query in queries:
         try:
+            logger.debug("[_batch_platform_search] Searching query: '%s'", query[:100])
+
+            #  СТРАТЕГИЯ 1: Попробуем БЕЗ ФИЛЬТРОВ вообще
+            # logger.debug("[_batch_platform_search] Trying search without any filters first...")
+            logger.debug("[_batch_platform_search] Attempting search without filters for query: '%s'", query[:100])
+
             docs = platform_store.similarity_search(
                 query,
-                k=k_per_query * len(platform_services),  # Увеличиваем k пропорционально
-                filter=filters
+                k=20  # Берем больше для ручной фильтрации
             )
-            all_platform_docs.extend(docs)
-            logger.debug("[_batch_platform_search] Query '%s' found %d platform docs", query[:50], len(docs))
-        except Exception as e:
-            logger.warning("[_batch_platform_search] Error searching '%s': %s", query[:50], str(e))
 
+            logger.debug("[_batch_platform_search] Found %d docs without filters", len(docs))
+
+            #  Фильтруем вручную
+            filtered_docs = []
+            for doc in docs:
+                doc_service = doc.metadata.get('service_code')
+                doc_page_id = doc.metadata.get('page_id')
+
+                # Проверяем принадлежность к платформенным сервисам
+                if doc_service in platform_codes:
+                    # Проверяем исключения
+                    if not exclude_page_ids or doc_page_id not in exclude_page_ids:
+                        filtered_docs.append(doc)
+
+                        # Логируем первые несколько для отладки
+                        if len(filtered_docs) <= 3:
+                            logger.debug("[_batch_platform_search] Added doc: page_id=%s, service=%s",
+                                         doc_page_id, doc_service)
+
+            # Ограничиваем до нужного количества
+            filtered_docs = filtered_docs[:k_per_query]
+            all_platform_docs.extend(filtered_docs)
+
+            logger.debug("[_batch_platform_search] Query '%s' found %d platform docs (after manual filtering)",
+                         query[:50], len(filtered_docs))
+
+        except Exception as e:
+            logger.error("[_batch_platform_search] Error searching query '%s': %s", query[:50], str(e))
+            # Пропускаем этот запрос, но продолжаем со следующими
+
+    logger.info("[_batch_platform_search] -> Total platform docs found: %d", len(all_platform_docs))
     return all_platform_docs
 
 
@@ -562,6 +612,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             [f"Page ID: {req['page_id']}\n{req['content']}" for req in requirements]
         )
 
+        logger.debug("[analyze_pages] Resolved requirements: %s", requirements_text)
         # ИЗМЕНЕНИЕ: передаем текст требований для семантического поиска
         context = build_context(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
 

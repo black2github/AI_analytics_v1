@@ -30,10 +30,16 @@ async def change_log_level(request: LogLevelRequest):
         )
 
     try:
+        # Сохраняем предыдущий уровень ДО изменения
+        previous_level = get_current_log_level()
+
+        # Изменяем уровень
         set_log_level(request.level)
+
         return {
             "message": f"Log level changed to {request.level.upper()}",
-            "previous_level": get_current_log_level()
+            "previous_level": previous_level,  # Теперь возвращаем реальный предыдущий уровень
+            "current_level": request.level.upper()  # Опционально: добавляем текущий уровень для ясности
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

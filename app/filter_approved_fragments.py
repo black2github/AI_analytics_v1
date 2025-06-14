@@ -188,8 +188,10 @@ def filter_approved_fragments(html: str) -> str:
                     if child_text:
                         approved_parts.append(child_text)
 
-        # ИСПРАВЛЕНО: Соединяем БЕЗ лишних пробелов
-        return "".join(approved_parts)
+        # Соединяем БЕЗ лишних пробелов
+        result = "".join(approved_parts)
+        result = re.sub(r'\s+', ' ', result)  # Нормализуем whitespace
+        return result.strip()
 
     def extract_approved_text(element) -> str:
         """Извлекает только подтвержденный текст из элемента"""
@@ -257,11 +259,19 @@ def filter_approved_fragments(html: str) -> str:
                 if child_text:  # Здесь тоже не делаем strip()!
                     result_parts.append(child_text)
 
-        # ИСПРАВЛЕНО: Соединяем БЕЗ дополнительных пробелов
-        result = "".join(result_parts)  # Это правильно
+        # Соединяем БЕЗ дополнительных пробелов
+        result = "".join(result_parts)
 
-        # Убираем только множественные пробелы, но сохраняем исходную структуру
+        # Более умная нормализация whitespace
+        # Сначала нормализуем горизонтальные пробелы
         result = re.sub(r'[ \t]+', ' ', result)
+
+        # Затем убираем лишние переносы строк, но оставляем одиночные
+        result = re.sub(r'\n\s*\n+', '\n\n', result)
+
+        # И только в самом конце делаем общую нормализацию (если нет списков)
+        if not re.search(r'[-*+]\s|\d+\.\s', result):  # Если нет маркеров списков
+            result = re.sub(r'\s+', ' ', result)
 
         return result.strip()  # strip() только в самом конце
 
@@ -308,7 +318,7 @@ def filter_approved_fragments(html: str) -> str:
 
             return " ".join(result_parts)
         else:
-            # Обработка списков в ячейках таблицы
+            # ===== УЛУЧШЕННАЯ ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
             lists = cell.find_all(["ul", "ol"], recursive=False)
 
             if lists:
@@ -322,20 +332,87 @@ def filter_approved_fragments(html: str) -> str:
                             cell_parts.append(text)
                     elif isinstance(child, Tag):
                         if child.name in ["ul", "ol"]:
-                            # ===== ИСПРАВЛЕНИЕ: ОСОБАЯ ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
-                            list_content = process_list_in_cell(child, 0)  # Новая функция!
+                            # ИСПРАВЛЕНИЕ: Обрабатываем список с сохранением структуры
+                            list_content = process_list_in_cell(child, 0)
                             if list_content:
                                 cell_parts.append(list_content)
                         else:
-                            # Обычный элемент
+                            # Обычный элемент (p, div, span, etc.)
                             text = extract_approved_text(child)
                             if text.strip():
                                 cell_parts.append(text.strip())
 
+                # ИСПРАВЛЕНИЕ: Правильное соединение
                 return "\n".join(cell_parts)
             else:
-                # Обычная ячейка без списков
-                return extract_approved_text(cell)
+                # СПЕЦИАЛЬНАЯ ПРОВЕРКА: Возможно список обернут в div или p
+                # Ищем списки глубже в структуре
+                deep_lists = cell.find_all(["ul", "ol"], recursive=True)
+                if deep_lists:
+                    # Найдены списки глубже - обрабатываем всю ячейку как содержащую списки
+                    cell_content = extract_approved_text(cell)
+
+                    # Проверяем, есть ли в результате признаки списков
+                    if any(line.strip().startswith(marker) for line in cell_content.split('\n')
+                           for marker in ['-', '*', '+']) or \
+                            any(re.match(r'^\s*\d+\.', line.strip()) for line in cell_content.split('\n')):
+                        return cell_content  # Возвращаем как есть, если уже есть маркеры
+
+                    # Если маркеров нет, пытаемся обработать списки принудительно
+                    result_parts = []
+                    for child in cell.children:
+                        if isinstance(child, NavigableString):
+                            text = str(child).strip()
+                            if text:
+                                result_parts.append(text)
+                        elif isinstance(child, Tag):
+                            child_text = extract_approved_text_for_lists(child)  # Новая функция!
+                            if child_text:
+                                result_parts.append(child_text)
+
+                    return "\n".join(result_parts)
+                else:
+                    # Обычная ячейка без списков
+                    return extract_approved_text(cell)
+
+    def extract_approved_text_for_lists(element) -> str:
+        """Специальная функция для извлечения списков из цветных контейнеров"""
+        from bs4 import Tag, NavigableString
+
+        if isinstance(element, NavigableString):
+            return str(element).strip()
+
+        if not isinstance(element, Tag):
+            return ""
+
+        # Если это список - обрабатываем как список
+        if element.name in ["ul", "ol"]:
+            return process_list_in_cell(element, 0)
+
+        # Если это контейнер со списком внутри
+        lists = element.find_all(["ul", "ol"], recursive=False)
+        if lists:
+            result_parts = []
+
+            for child in element.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        result_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        list_content = process_list_in_cell(child, 0)
+                        if list_content:
+                            result_parts.append(list_content)
+                    else:
+                        text = extract_approved_text(child)
+                        if text.strip():
+                            result_parts.append(text.strip())
+
+            return "\n".join(result_parts)
+
+        # Обычная обработка
+        return extract_approved_text(element)
 
     def process_nested_table_to_html(table: Tag) -> str:
         """Преобразует вложенную таблицу в HTML"""
@@ -436,8 +513,8 @@ def filter_approved_fragments(html: str) -> str:
                     text = str(child).strip()
                     if text:
                         approved_parts.append(text)
-            # ✅ ИСПРАВЛЕНО: Убираем лишние пробелы
-            return "".join(approved_parts)  # Было " ".join(approved_parts)
+            # Убираем лишние пробелы
+            return "".join(approved_parts)
 
         # ИСПРАВЛЕНИЕ: Убираем проверку цветных предков для вложенных таблиц
         # Это позволит обрабатывать черные ссылки в цветных ячейках
@@ -454,11 +531,12 @@ def filter_approved_fragments(html: str) -> str:
                 if child_text:
                     result_parts.append(child_text)
 
-        # ✅ ИСПРАВЛЕНО: Соединяем БЕЗ лишних пробелов
+        # Соединяем БЕЗ лишних пробелов
         result = "".join(result_parts)  # Было " ".join(child_texts)
 
         # Нормализуем пробелы
         result = re.sub(r'[ \t]+', ' ', result)
+        result = re.sub(r'\s+', ' ', result)  # Нормализуем ВСЕ whitespace символы
 
         return result.strip()
 
@@ -648,18 +726,36 @@ def filter_approved_fragments(html: str) -> str:
         item_counter = 1
 
         for li in list_element.find_all("li", recursive=False):
-            # ===== СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ ЯЧЕЕК ТАБЛИЦЫ =====
-            # Извлекаем ВСЕ подтвержденное содержимое элемента li
-            item_text = extract_approved_text(li)
+            # ИСПРАВЛЕНИЕ: Извлекаем содержимое элемента li БЕЗ вложенных списков
+            item_content_parts = []
+
+            for child in li.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        item_content_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        # Вложенный список обработаем отдельно
+                        continue
+                    else:
+                        # Обычный текстовый элемент
+                        text = extract_approved_text(child)
+                        if text.strip():
+                            item_content_parts.append(text.strip())
+
+            # Формируем основной текст пункта
+            item_text = " ".join(item_content_parts)
 
             if item_text.strip():
+                # Добавляем маркер и отступ
                 if list_element.name == "ul":
                     list_items.append(f"{indent}{marker} {item_text.strip()}")
                 else:
                     list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
                     item_counter += 1
 
-            # Обрабатываем вложенные списки
+            # ИСПРАВЛЕНИЕ: Обрабатываем вложенные списки отдельно
             nested_lists = li.find_all(["ul", "ol"], recursive=False)
             for nested_list in nested_lists:
                 nested_content = process_list_in_cell(nested_list, indent_level + 1)
@@ -678,7 +774,7 @@ def filter_approved_fragments(html: str) -> str:
     result = re.sub(r' +\.', '.', result)  # Убираем пробелы перед точками
     result = re.sub(r' +,', ',', result)  # Убираем пробелы перед запятыми
 
-    logger.info("[filter_approved_fragments] -> {%s}", result[:500]+"...")
+    logger.info("[filter_approved_fragments] -> {%s}", result)
 
     return result.strip()
 

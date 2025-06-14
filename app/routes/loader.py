@@ -289,3 +289,33 @@ async def remove_platform_pages(request: RemovePagesRequest):
     except Exception as e:
         logging.error("[remove_platform_pages] Error: %s", str(e))
         return {"error": str(e)}
+
+
+@router.get("/debug_collections", tags=["Отладка"])
+async def debug_collections():
+    """Отладочная информация о коллекциях"""
+    try:
+        embedding_model = get_embeddings_model()
+
+        collections_info = {}
+
+        for collection_name in ["service_pages", "platform_context", "requirement_templates"]:
+            try:
+                store = get_vectorstore(collection_name, embedding_model=embedding_model)
+                data = store.get()
+
+                collections_info[collection_name] = {
+                    "total_documents": len(data.get('ids', [])),
+                    "sample_metadata": data.get('metadatas', [])[:3] if data.get('metadatas') else [],
+                    "status": "ok"
+                }
+            except Exception as e:
+                collections_info[collection_name] = {
+                    "status": "error",
+                    "error": str(e)
+                }
+
+        return collections_info
+
+    except Exception as e:
+        return {"error": str(e)}

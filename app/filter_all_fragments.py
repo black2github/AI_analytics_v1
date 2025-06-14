@@ -81,14 +81,21 @@ def filter_all_fragments(html: str) -> str:
                 if child_text:  # Здесь тоже не делаем strip()!
                     result_parts.append(child_text)
 
-        # ИСПРАВЛЕНИЕ: Соединяем БЕЗ дополнительных пробелов
-        result = "".join(result_parts)  # Было " ".join() - исправлено на "".join()
+        # Соединяем БЕЗ дополнительных пробелов
+        result = "".join(result_parts)
 
-        # Убираем только множественные пробелы, но сохраняем исходную структуру
+        # Более умная нормализация whitespace
+        # Сначала нормализуем горизонтальные пробелы
         result = re.sub(r'[ \t]+', ' ', result)
 
-        return result.strip()  # strip() только в самом конце
+        # Затем убираем лишние переносы строк, но оставляем одиночные
+        result = re.sub(r'\n\s*\n+', '\n\n', result)
 
+        # И только если нет маркеров списков, делаем полную нормализацию
+        if not re.search(r'[-*+]\s|\d+\.\s', result):
+            result = re.sub(r'\s+', ' ', result)
+
+        return result.strip()
 
     def process_table_cell(cell, is_nested=False):
         """Обрабатывает содержимое ячейки таблицы"""
@@ -128,7 +135,7 @@ def filter_all_fragments(html: str) -> str:
             if text_after.strip():
                 result_parts.append(text_after.strip())
 
-            return "".join(result_parts) # TODO " " -> "" ?
+            return "".join(result_parts)
         else:
             # ===== ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
             # Ячейка без вложенной таблицы - проверяем наличие списков
@@ -145,8 +152,8 @@ def filter_all_fragments(html: str) -> str:
                             cell_parts.append(text)
                     elif isinstance(child, Tag):
                         if child.name in ["ul", "ol"]:
-                            # Обрабатываем список с сохранением структуры
-                            list_content = process_list(child, 0)
+                            # ИСПРАВЛЕНИЕ: Используем правильную функцию
+                            list_content = process_list_in_cell_all(child, 0)  # ← ЭТА СТРОКА КЛЮЧЕВАЯ!
                             if list_content:
                                 cell_parts.append(list_content)
                         else:
@@ -155,10 +162,67 @@ def filter_all_fragments(html: str) -> str:
                             if text.strip():
                                 cell_parts.append(text.strip())
 
-                return "\n".join(cell_parts)
+                # ИСПРАВЛЕНИЕ: Правильное соединение
+                return "\n".join(cell_parts)  # ← ВСЕГДА используем переносы для ячеек со списками
             else:
-                # Обычная ячейка без списков
-                return extract_all_text(cell)
+                # СПЕЦИАЛЬНАЯ ПРОВЕРКА: Ищем списки глубже
+                deep_lists = cell.find_all(["ul", "ol"], recursive=True)
+                if deep_lists:
+                    # Принудительная обработка списков
+                    result_parts = []
+                    for child in cell.children:
+                        if isinstance(child, NavigableString):
+                            text = str(child).strip()
+                            if text:
+                                result_parts.append(text)
+                        elif isinstance(child, Tag):
+                            child_text = extract_all_text_for_lists(child)  # Новая функция!
+                            if child_text:
+                                result_parts.append(child_text)
+
+                    return "\n".join(result_parts)
+                else:
+                    # Обычная ячейка без списков
+                    return extract_all_text(cell)
+
+    def extract_all_text_for_lists(element) -> str:
+        """Специальная функция для извлечения списков из любых контейнеров"""
+        from bs4 import Tag, NavigableString
+
+        if isinstance(element, NavigableString):
+            return str(element).strip()
+
+        if not isinstance(element, Tag):
+            return ""
+
+        # Если это список - обрабатываем как список
+        if element.name in ["ul", "ol"]:
+            return process_list_in_cell_all(element, 0)
+
+        # Если это контейнер со списком внутри
+        lists = element.find_all(["ul", "ol"], recursive=False)
+        if lists:
+            result_parts = []
+
+            for child in element.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        result_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        list_content = process_list_in_cell_all(child, 0)
+                        if list_content:
+                            result_parts.append(list_content)
+                    else:
+                        text = extract_all_text(child)
+                        if text.strip():
+                            result_parts.append(text.strip())
+
+            return "\n".join(result_parts)
+
+        # Обычная обработка
+        return extract_all_text(element)
 
     def process_nested_table_to_html(table: Tag) -> str:
         """Преобразует вложенную таблицу в HTML"""
@@ -249,6 +313,7 @@ def filter_all_fragments(html: str) -> str:
 
         # Нормализуем пробелы
         result = re.sub(r'[ \t]+', ' ', result)
+        result = re.sub(r'\s+', ' ', result)  # Нормализуем ВСЕ whitespace символы
 
         return result.strip()
 
@@ -358,6 +423,57 @@ def filter_all_fragments(html: str) -> str:
 
         return "\n".join(list_items)
 
+    def process_list_in_cell_all(list_element: Tag, indent_level: int = 0) -> str:
+        """Обрабатывает список в ячейке таблицы для filter_all_fragments (ВСЕ фрагменты)"""
+        list_items = []
+        indent = "    " * indent_level  # 4 пробела на уровень
+
+        if list_element.name == "ul":
+            markers = ["-", "*", "+"]
+            marker = markers[indent_level % len(markers)]
+        else:
+            marker = None
+
+        item_counter = 1
+
+        for li in list_element.find_all("li", recursive=False):
+            # ИСПРАВЛЕНИЕ: Извлекаем содержимое элемента li БЕЗ вложенных списков
+            item_content_parts = []
+
+            for child in li.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        item_content_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        # Вложенный список обработаем отдельно
+                        continue
+                    else:
+                        # Обычный текстовый элемент
+                        text = extract_all_text(child)
+                        if text.strip():
+                            item_content_parts.append(text.strip())
+
+            # Формируем основной текст пункта
+            item_text = " ".join(item_content_parts)
+
+            if item_text.strip():
+                # Добавляем маркер и отступ
+                if list_element.name == "ul":
+                    list_items.append(f"{indent}{marker} {item_text.strip()}")
+                else:
+                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
+                    item_counter += 1
+
+            # ИСПРАВЛЕНИЕ: Обрабатываем вложенные списки отдельно
+            nested_lists = li.find_all(["ul", "ol"], recursive=False)
+            for nested_list in nested_lists:
+                nested_content = process_list_in_cell_all(nested_list, indent_level + 1)
+                if nested_content:
+                    list_items.append(nested_content)
+
+        return "\n".join(list_items)
 
     def process_elements_sequentially(container) -> List[str]:
         """Обрабатывает элементы в том порядке, как они идут в HTML"""
@@ -423,7 +539,7 @@ def filter_all_fragments(html: str) -> str:
     all_fragments = process_elements_sequentially(soup)
     result = "\n\n".join(all_fragments)
     result = re.sub(r'\n\s*\n+', '\n\n', result)
-    result = re.sub(r'[ \t]+', ' ', result)
+    # result = re.sub(r'[ \t]+', ' ', result)
 
     logger.info("[filter_all_fragments] -> {%s}", result[:500]+"...")
 
@@ -469,7 +585,7 @@ if __name__ == "__main__":
         assert result.strip() == "[[КК_БК] Заявка на блокировку карты],"
         # Не должно быть: "- [[КК_БК] Заявка на блокировку карты] ,"
 
-        print("✅ Тест прошел! Лишние пробелы убраны.")
+        print("V Тест прошел! Лишние пробелы убраны.")
 
 
     if __name__ == "__main__":

@@ -48,6 +48,87 @@ def test_nested_table_links():
     print("V Тест вложенных таблиц прошел!")
 
 
+def test_approved_table_list_structure():
+    """НОВЫЙ ТЕСТ: Проверка структуры списков в таблицах (подтвержденные)"""
+    html = '''
+    <table>
+        <tr>
+            <td class="confluenceTd">
+                <div class="content-wrapper">
+                    <p><strong>Наименование поля:</strong> отображается список категорий:</p>
+                    <ul>
+                        <li><span style="color: rgb(0,51,102);">Дневной</span></li>
+                        <li><span style="color: rgb(0,51,102);">Месячный</span></li>
+                        <li><span style="color: rgb(0,51,102);">Квартальный</span></li>
+                        <li><span style="color: rgb(0,51,102);">Годовой</span></li>
+                    </ul>
+                </div>
+            </td>
+        </tr>
+    </table>
+    '''
+
+    result = filter_approved_fragments(html)
+    print(f"Approved table list result: '{result}'")
+
+    # Проверяем правильную структуру списка
+    assert "Наименование поля: отображается список категорий:" in result
+    assert "- Дневной" in result
+    assert "- Месячный" in result
+
+    # Главное - проверяем, что НЕТ склеенной строки
+    assert "ДневнойМесячныйКвартальныйГодовой" not in result
+    assert "категорий:Дневной" not in result
+
+    print("V Тест структуры списков в таблицах (подтвержденные) прошел!")
+
+
+def test_approved_simple_paragraphs():
+    """НОВЫЙ ТЕСТ: Проверка, что простые параграфы не сломались"""
+    html = '''
+    <p>Простой параграф.</p>
+    <p>Еще один <strong>параграф</strong> с выделением.</p>
+    <p style="color: red;">Цветной параграф (должен быть исключен).</p>
+    <p>Финальный параграф.</p>
+    '''
+
+    result = filter_approved_fragments(html)
+    print(f"Simple paragraphs result: '{result}'")
+
+    assert "Простой параграф." in result
+    assert "Еще один параграф с выделением." in result
+    assert "Финальный параграф." in result
+    assert "Цветной параграф" not in result
+
+    print("V Тест простых параграфов (подтвержденные) прошел!")
+
+
+def test_approved_simple_lists():
+    """НОВЫЙ ТЕСТ: Проверка, что обычные списки не сломались"""
+    html = '''
+    <p>Требования:</p>
+    <ul>
+        <li>Первое требование</li>
+        <li><span style="color: red;">Цветное требование</span></li>
+        <li>Третье требование</li>
+    </ul>
+    '''
+
+    result = filter_approved_fragments(html)
+    print(f"Simple lists result: '{result}'")
+
+    assert "Требования:" in result
+    assert "- Первое требование" in result
+    assert "- Третье требование" in result
+    assert "Цветное требование" not in result
+
+    print("V Тест простых списков (подтвержденные) прошел!")
+
+
 if __name__ == "__main__":
     test_approved_link_spacing_fix()
     test_nested_table_links()
+    test_approved_table_list_structure()
+    test_approved_simple_paragraphs()
+    test_approved_simple_lists()
+    print("!!! Все тесты подтвержденных фрагментов прошли!")

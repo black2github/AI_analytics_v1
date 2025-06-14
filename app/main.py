@@ -48,3 +48,17 @@ try:
     logger.info("Embedding model initialized successfully")
 except Exception as e:
     logger.error("Failed to initialize embedding model: %s", str(e))
+
+try:
+    import chromadb
+
+    chroma_version = chromadb.__version__
+    logger.info(f"ChromaDB version: {chroma_version}")
+
+    # Предупреждение для проблемных версий
+    if chroma_version.startswith("0.4.") or chroma_version.startswith("0.5."):
+        logger.warning("ChromaDB version %s may have issues with complex filters. Using simplified filtering.",
+                       chroma_version)
+
+except Exception as e:
+    logger.warning("Could not determine ChromaDB version: %s", str(e))

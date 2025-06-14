@@ -6,10 +6,7 @@ import sys
 
 class TrimFilter(logging.Filter):
     """
-    Фильтр для обрезки длинных сообщений и установки уровня логирования.
-    - DEBUG записи полностью исключаются
-    - INFO записи обрезаются до 1000 символов
-    - WARNING и выше пропускаются без изменений
+    Фильтр для обрезки длинных сообщений с динамическим уровнем логирования.
     """
 
     def __init__(self, logger_level=logging.INFO):
@@ -17,27 +14,26 @@ class TrimFilter(logging.Filter):
         self.logger_level = logger_level
 
     def filter(self, record):
-        # Исключаем DEBUG записи
-        if record.levelno == logging.DEBUG:
-            return False  # DEBUG записи не попадают в журнал
+        # ИСПРАВЛЕНИЕ: Проверяем против текущего уровня фильтра
+        if record.levelno < self.logger_level:
+            return False  # Блокируем записи ниже установленного уровня
 
-        # Обрезаем INFO записи до 1000 символов
+        # Обрезаем INFO записи до 2000 символов
         if record.levelno == logging.INFO:
-            if isinstance(record.msg, str) and len(record.msg) > 1000:
-                record.msg = record.msg[:1000] + "... [обрезано]"
+            if isinstance(record.msg, str) and len(record.msg) > 2000:
+                record.msg = record.msg[:2000] + "... [обрезано]"
             # Также обрабатываем случай с аргументами
             if hasattr(record, 'args') and record.args:
                 try:
                     # Форматируем сообщение с аргументами
                     formatted_msg = record.msg % record.args
-                    if len(formatted_msg) > 1000:
-                        record.msg = formatted_msg[:1000] + "... [обрезано]"
+                    if len(formatted_msg) > 2000:
+                        record.msg = formatted_msg[:2000] + "... [обрезано]"
                         record.args = ()  # Очищаем args, так как уже отформатировали
                 except (TypeError, ValueError):
                     # Если форматирование не удалось, обрезаем только msg
-                    if len(str(record.msg)) > 1000:
-                        record.msg = str(record.msg)[:1000] + "... [обрезано]"
-            return True
+                    if len(str(record.msg)) > 2000:
+                        record.msg = str(record.msg)[:2000] + "... [обрезано]"
 
         # WARNING, ERROR, CRITICAL пропускаем без изменений
         return True
@@ -97,4 +93,4 @@ def setup_logging():
     logging.getLogger('langchain').setLevel(logging.WARNING)
     logging.getLogger('openai').setLevel(logging.WARNING)
 
-    logger.info("Logging configured: level=INFO, max_message_length=1000 chars")
+    logger.info("Logging configured: level=INFO, max_message_length=2000 chars")
