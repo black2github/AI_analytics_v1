@@ -500,6 +500,32 @@ def filter_approved_fragments(html: str) -> str:
             else:
                 return ""
 
+        # Специальная обработка списков во вложенных таблицах
+        if element.name in ["ul", "ol"]:
+            return process_list_in_nested_table_approved(element, 0)
+
+        #  Проверяем, есть ли списки в элементе
+        lists = element.find_all(["ul", "ol"], recursive=False)
+        if lists:
+            result_parts = []
+
+            for child in element.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        result_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        list_content = process_list_in_nested_table_approved(child, 0)
+                        if list_content:
+                            result_parts.append(list_content)
+                    else:
+                        child_text = extract_approved_text_for_nested_table(child)
+                        if child_text:
+                            result_parts.append(child_text)
+
+            return "\n".join(result_parts)
+
         # Если элемент сам цветной - ищем черные дочерние элементы
         if has_colored_style(element):
             approved_parts = []
@@ -539,6 +565,40 @@ def filter_approved_fragments(html: str) -> str:
         result = re.sub(r'\s+', ' ', result)  # Нормализуем ВСЕ whitespace символы
 
         return result.strip()
+
+    def process_list_in_nested_table_approved(list_element: Tag, indent_level: int = 0) -> str:
+        """Обрабатывает список во вложенной таблице для filter_approved_fragments"""
+        list_items = []
+        indent = "    " * indent_level
+
+        if list_element.name == "ul":
+            markers = ["-", "*", "+"]
+            marker = markers[indent_level % len(markers)]
+        else:
+            marker = None
+
+        item_counter = 1
+
+        for li in list_element.find_all("li", recursive=False):
+            # Извлекаем ТОЛЬКО подтвержденное содержимое элемента li
+            item_text = extract_approved_text(li)
+
+            if item_text.strip():
+                if list_element.name == "ul":
+                    list_items.append(f"{indent}{marker} {item_text.strip()}")
+                else:
+                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
+                    item_counter += 1
+
+            # Обрабатываем вложенные списки
+            nested_lists = li.find_all(["ul", "ol"], recursive=False)
+            for nested_list in nested_lists:
+                nested_content = process_list_in_nested_table_approved(nested_list, indent_level + 1)
+                if nested_content:
+                    list_items.append(nested_content)
+
+        return "\n".join(list_items)
+
 
     def process_table(table: Tag) -> str:
         """Обрабатывает таблицу с гибридной разметкой"""

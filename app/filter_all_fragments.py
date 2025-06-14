@@ -296,7 +296,33 @@ def filter_all_fragments(html: str) -> str:
             else:
                 return ""
 
-        # ИСПРАВЛЕНИЕ: Рекурсивно обрабатываем дочерние элементы БЕЗ ЛИШНИХ ПРОБЕЛОВ
+        # НОВОЕ: Специальная обработка списков во вложенных таблицах
+        if element.name in ["ul", "ol"]:
+            return process_list_in_nested_table_all(element, 0)
+
+        # НОВОЕ: Проверяем, есть ли списки в элементе
+        lists = element.find_all(["ul", "ol"], recursive=False)
+        if lists:
+            result_parts = []
+
+            for child in element.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        result_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        list_content = process_list_in_nested_table_all(child, 0)
+                        if list_content:
+                            result_parts.append(list_content)
+                    else:
+                        child_text = extract_all_text_for_nested_table(child)
+                        if child_text:
+                            result_parts.append(child_text)
+
+            return "\n".join(result_parts)
+
+        # ИСПРАВЛЕНИЕ: Рекурсивно обрабатываем дочерние элементы
         result_parts = []
         for child in element.children:
             if isinstance(child, NavigableString):
@@ -309,13 +335,70 @@ def filter_all_fragments(html: str) -> str:
                     result_parts.append(child_text)
 
         # ИСПРАВЛЕНИЕ: Соединяем БЕЗ пробелов
-        result = "".join(result_parts)  # Было " ".join() - исправлено на "".join()
+        result = "".join(result_parts)
 
         # Нормализуем пробелы
         result = re.sub(r'[ \t]+', ' ', result)
-        result = re.sub(r'\s+', ' ', result)  # Нормализуем ВСЕ whitespace символы
+
+        # НЕ нормализуем переносы строк для списков во вложенных таблицах
+        if not re.search(r'[-*+]\s|\d+\.\s', result):
+            result = re.sub(r'\s+', ' ', result)
 
         return result.strip()
+
+
+    def process_list_in_nested_table_all(list_element: Tag, indent_level: int = 0) -> str:
+        """Обрабатывает список во вложенной таблице для filter_all_fragments"""
+        list_items = []
+        indent = "    " * indent_level
+
+        if list_element.name == "ul":
+            markers = ["-", "*", "+"]
+            marker = markers[indent_level % len(markers)]
+        else:
+            marker = None
+
+        item_counter = 1
+
+        for li in list_element.find_all("li", recursive=False):
+            # Извлекаем содержимое элемента li БЕЗ вложенных списков
+            item_content_parts = []
+
+            for child in li.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        item_content_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        # Вложенный список обработаем отдельно
+                        continue
+                    else:
+                        # Обычный текстовый элемент - используем простую обработку для вложенных таблиц
+                        text = child.get_text(strip=True)  # Простое извлечение текста
+                        if text:
+                            item_content_parts.append(text)
+
+            # Формируем основной текст пункта
+            item_text = " ".join(item_content_parts)
+
+            if item_text.strip():
+                # Добавляем маркер и отступ
+                if list_element.name == "ul":
+                    list_items.append(f"{indent}{marker} {item_text.strip()}")
+                else:
+                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
+                    item_counter += 1
+
+            # Обрабатываем вложенные списки отдельно
+            nested_lists = li.find_all(["ul", "ol"], recursive=False)
+            for nested_list in nested_lists:
+                nested_content = process_list_in_nested_table_all(nested_list, indent_level + 1)
+                if nested_content:
+                    list_items.append(nested_content)
+
+        return "\n".join(list_items)
+
 
     def process_table(table: Tag) -> str:
         """Обрабатывает таблицу с гибридной разметкой"""
