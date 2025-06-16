@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Dict
-from app.embedding_store import get_vectorstore, prepare_documents_for_index
+from app.embedding_store import get_vectorstore, prepare_documents_for_index, prepare_documents_for_approved_content
 from app.llm_interface import get_embeddings_model
 from app.confluence_loader import load_pages_by_ids, get_child_page_ids
 from app.service_registry import resolve_service_code_from_pages_or_user, is_platform_service
@@ -99,51 +99,6 @@ async def load_service_pages(payload: LoadRequest):
     except Exception as e:
         logging.exception("Error in /load_pages")
         return {"error": str(e)}
-
-
-def prepare_documents_for_approved_content(
-        pages: list,
-        service_code: str | None = None,
-        source: str = "confluence",
-        doc_type: str = "requirement",
-        enrich_with_type: bool = False
-) -> list:
-    """
-    НОВАЯ ФУНКЦИЯ: Создает документы ТОЛЬКО из подтвержденного содержимого страниц.
-    Это гарантирует, что в векторное хранилище попадают только подтвержденные требования.
-    """
-    from langchain_core.documents import Document
-
-    docs = []
-    for page in pages:
-        # ИСПОЛЬЗУЕМ ТОЛЬКО ПОДТВЕРЖДЕННОЕ СОДЕРЖИМОЕ
-        approved_content = page.get("approved_content", "")
-        if not approved_content or not approved_content.strip():
-            logger.warning("[prepare_documents_for_approved_content] No approved content for page %s", page.get("id"))
-            continue
-
-        metadata = {
-            "page_id": page["id"],
-            "title": page["title"],
-            "source": source,
-            "type": doc_type,
-            "content_type": "approved_only"  # Маркер, что это только подтвержденное содержимое
-        }
-
-        if service_code:
-            metadata["service_code"] = service_code
-        if enrich_with_type and "title" in page:
-            metadata["requirement_type"] = page["title"].replace("Template: ", "").strip()
-
-        # СОЗДАЕМ ДОКУМЕНТ ТОЛЬКО ИЗ ПОДТВЕРЖДЕННОГО СОДЕРЖИМОГО
-        doc = Document(page_content=approved_content.strip(), metadata=metadata)
-        docs.append(doc)
-
-        logger.debug("[prepare_documents_for_approved_content] Created doc for page %s (%d chars approved content)",
-                     page["id"], len(approved_content))
-
-    logger.info("[prepare_documents_for_approved_content] -> Created %d documents from approved content", len(docs))
-    return docs
 
 
 @router.post("/load_templates", tags=["Загрузка Confluence шаблонов страниц требований"])

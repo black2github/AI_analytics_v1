@@ -20,7 +20,8 @@ from app.service_registry import (
     resolve_service_code_by_user
 )
 from app.template_registry import get_template_by_type
-from app.semantic_search import extract_key_queries, deduplicate_documents
+from app.semantic_search import extract_key_queries, deduplicate_documents, extract_entity_names_from_requirements, \
+    _search_by_entity_title, extract_entity_attribute_queries
 from app.filter_approved_fragments import has_colored_style
 
 llm = get_llm()
@@ -60,8 +61,8 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
 def build_context(service_code: str, requirements_text: str = "", exclude_page_ids: Optional[List[str]] = None):
     """
     Оптимизированная версия формирования контекста с улучшенной производительностью.
-
-    Args:
+    УЛУЧШЕННАЯ версия с точным поиском моделей данных.
+        Args:
         service_code: Код сервиса
         requirements_text: Текст анализируемых требований для семантического поиска
         exclude_page_ids: Список ID страниц, исключаемых из контекста
@@ -69,50 +70,67 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
     Returns:
         Строковый контекст, объединяющий содержимое документов
     """
-    logger.info("[build_context] <- service_code=%s, requirements_length=%d, exclude_page_ids=%s",
-                service_code, len(requirements_text), exclude_page_ids)
+    logger.info("[build_context] <- service_code=%s, requirements_length=%d", service_code, len(requirements_text))
 
     embeddings_model = get_embeddings_model()
 
-    # 1. ОДИН РАЗ ФОРМИРУЕМ ФИЛЬТРЫ
-    service_filters = _create_filters(service_code, exclude_page_ids)
+    # 1. ИЗВЛЕКАЕМ НАЗВАНИЯ СУЩНОСТЕЙ для точного поиска по title
+    entity_names = extract_entity_names_from_requirements(requirements_text)
 
-    # 2. ИЗВЛЕКАЕМ КЛЮЧЕВЫЕ ЗАПРОСЫ (или используем fallback)
+    # 2. ТОЧНЫЙ ПОИСК ПО НАЗВАНИЯМ СУЩНОСТЕЙ (приоритет #1)
+    exact_match_docs = _search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
+
+    # 3. ИЗВЛЕКАЕМ КЛЮЧЕВЫЕ ЗАПРОСЫ (включая entity queries)
     search_queries = _prepare_search_queries(requirements_text)
+    entity_queries = extract_entity_attribute_queries(requirements_text)
+    regular_queries = [q for q in search_queries if q not in entity_queries]
 
-    # 3. БАТЧЕВЫЙ ПОИСК ПО СЕРВИСНЫМ ТРЕБОВАНИЯМ
-    service_docs = _batch_similarity_search(
+    # 4. ДОПОЛНИТЕЛЬНЫЙ ПОИСК МОДЕЛЕЙ ДАННЫХ (если точный поиск не дал результатов)
+    additional_model_docs = []
+    if len(exact_match_docs) < len(entity_names):  # Не все сущности найдены точно
+        additional_model_docs = _search_data_models(entity_queries, service_code, exclude_page_ids, embeddings_model)
+
+    # 5. ОБЫЧНЫЙ ПОИСК ПО СЕРВИСНЫМ ТРЕБОВАНИЯМ
+    service_filters = _create_filters(service_code, exclude_page_ids)
+    service_docs = batch_service_search(
         store_name="service_pages",
-        queries=search_queries,
+        queries=regular_queries,
         filters=service_filters,
         k_per_query=3,
         embeddings_model=embeddings_model
     )
 
-    # 4. БАТЧЕВЫЙ ПОИСК ПО ПЛАТФОРМЕННЫМ ТРЕБОВАНИЯМ
-    platform_docs = _batch_platform_search(
-        queries=search_queries,
-        exclude_page_ids=exclude_page_ids,
-        k_per_query=2,  # Меньше для платформенных
-        embeddings_model=embeddings_model
-    )
+    # 6. ПОИСК ПО ПЛАТФОРМЕННЫМ ТРЕБОВАНИЯМ (исключая dataModel)
+    try:
+        platform_docs = batch_platform_search(
+            queries=regular_queries,
+            exclude_page_ids=exclude_page_ids,
+            k_per_query=2,
+            embeddings_model=embeddings_model,
+            exclude_services=["dataModel"]  # Исключаем, так как искали модель данных ранее на шаге 2
+        )
 
-    # 5. КОНТЕКСТ ИЗ ССЫЛОК (ИСПРАВЛЕНО: только из неподтвержденных фрагментов)
+        logger.debug("[build_context] Filtered out dataModel, remaining platform docs: %d", len(platform_docs))
+
+    except Exception as e:
+        logger.error("[build_context] Platform search failed: %s", str(e))
+        platform_docs = []
+
+    # 7. КОНТЕКСТ ИЗ ССЫЛОК
     linked_docs = _extract_linked_context_optimized(exclude_page_ids) if exclude_page_ids else []
 
-    # 6. ЭФФЕКТИВНОЕ ОБЪЕДИНЕНИЕ И ДЕДУПЛИКАЦИЯ
-    all_docs = service_docs + platform_docs
+    # 8. ОБЪЕДИНЕНИЕ С МАКСИМАЛЬНЫМ ПРИОРИТЕТОМ ДЛЯ ТОЧНЫХ СОВПАДЕНИЙ
+    all_docs = exact_match_docs + additional_model_docs + service_docs + platform_docs
     unique_docs = _fast_deduplicate_documents(all_docs)
 
-    # 7. ФОРМИРОВАНИЕ ИТОГОВОГО КОНТЕКСТА
+    # 9. ФОРМИРОВАНИЕ КОНТЕКСТА
     context_parts = [d.page_content for d in unique_docs] + linked_docs
     context = "\n\n".join(context_parts)
-
-    # 8. УМНОЕ ОГРАНИЧЕНИЕ ДЛИНЫ
     context = _smart_truncate_context(context, max_length=16000)
 
-    logger.info("[build_context] -> service_docs=%d, platform_docs=%d, linked_docs=%d, unique_docs=%d, final_length=%d",
-                len(service_docs), len(platform_docs), len(linked_docs), len(unique_docs), len(context))
+    logger.info("[build_context] -> exact_matches=%d, additional_models=%d, service=%d, platform=%d, linked=%d",
+                len(exact_match_docs), len(additional_model_docs), len(service_docs),
+                len(platform_docs), len(linked_docs))
 
     return context
 
@@ -143,38 +161,64 @@ def _prepare_search_queries(requirements_text: str) -> List[str]:
 
     # Fallback: первые 10 слов
     fallback_query = " ".join(requirements_text.split()[:10])
-    logger.debug("[_prepare_search_queries] Using fallback query: %s", fallback_query)
+    logger.warning("[_prepare_search_queries] -> Using fallback query: %s", fallback_query)
     return [fallback_query]
 
 
-def _batch_similarity_search(store_name: str, queries: List[str], filters: dict,
-                             k_per_query: int, embeddings_model) -> List:
+def batch_service_search(store_name: str, queries: List[str], filters: dict,
+                         k_per_query: int, embeddings_model) -> List:
     """Батчевый поиск по одному хранилищу"""
+    logger.debug("[batch_service_search] <- store='%s', queries='%s', filters='%s', k_per_query=%d",
+                 store_name, queries, filters, k_per_query)
+
     store = get_vectorstore(store_name, embedding_model=embeddings_model)
     all_docs = []
 
     # ДОБАВИТЬ ЛОГИРОВАНИЕ ФИЛЬТРОВ ДЛЯ СРАВНЕНИЯ
-    logger.debug("[_batch_similarity_search] Store: %s, Filter: %s", store_name, filters)
+    logger.debug("[batch_service_search] Store: %s, Filter: %s", store_name, filters)
 
     for query in queries:
         try:
             docs = store.similarity_search(query, k=k_per_query, filter=filters)
             all_docs.extend(docs)
-            logger.debug("[_batch_similarity_search] Store: %s, Query '%s' found %d docs",
+            logger.debug("[batch_service_search] Store: %s, Query '%s' found %d docs",
                         store_name, query[:50], len(docs))
         except Exception as e:
-            logger.error("[_batch_similarity_search] Store: %s, Error searching '%s': %s",
+            logger.error("[batch_service_search] Store: %s, Error searching '%s': %s",
                         store_name, query[:50], str(e))
+
+    logger.debug("[batch_service_search] -> %d docs", len(all_docs))
 
     return all_docs
 
 
-def _batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[str]],
-                           k_per_query: int, embeddings_model) -> List:
-    """Оптимизированный поиск по платформенным сервисам"""
+def batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[str]],
+                          k_per_query: int, embeddings_model, exclude_services: Optional[List[str]] = None) -> List:
+    """
+    Оптимизированный поиск по платформенным сервисам
+
+    Args:
+        queries: Список поисковых запросов
+        exclude_page_ids: Исключаемые page_id
+        k_per_query: Количество результатов на запрос
+        embeddings_model: Модель эмбеддингов
+        exclude_services: Список кодов сервисов для исключения из поиска
+    """
+    logger.debug("[batch_platform_search] <- %d queries, exclude pages = {%s}, exclude services = {%s}", len(queries), exclude_page_ids, exclude_services)
+
     platform_services = get_platform_services()
     if not platform_services:
-        logger.warning("[_batch_platform_search] No platform services found")
+        logger.warning("[batch_platform_search] No platform services found")
+        return []
+
+    # Фильтруем исключаемые сервисы (например, dataModel, в котором искали ранее)
+    if exclude_services:
+        exclude_set = set(exclude_services)
+        platform_services = [svc for svc in platform_services if svc["code"] not in exclude_set]
+        logger.debug("[batch_platform_search] Excluded services: %s", exclude_services)
+
+    if not platform_services:
+        logger.warning("[batch_platform_search] No platform services left after exclusions")
         return []
 
     platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
@@ -182,79 +226,87 @@ def _batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[s
     try:
         collection_data = platform_store.get()
         total_docs = len(collection_data.get('ids', []))
-        logger.debug("[_batch_platform_search] Platform collection contains %d documents", total_docs)
+        logger.debug("[batch_platform_search] Platform collection contains %d documents", total_docs)
 
-        #  ДИАГНОСТИКА: Проверяем структуру метаданных
+        # ОТЛАДКА: Показываем отфильтрованные сервисы
         if collection_data.get('metadatas'):
             sample_metadata = collection_data['metadatas'][:5]
-            logger.debug("[_batch_platform_search] Sample metadata: %s", sample_metadata)
+            logger.debug("[batch_platform_search] Sample metadata: %s", sample_metadata)
 
-            # Проверяем service_code в данных
             service_codes_in_data = set()
-            for metadata in collection_data['metadatas'][:100]:  # Проверяем первые 100
+            for metadata in collection_data['metadatas'][:100]:
                 if metadata and 'service_code' in metadata:
                     service_codes_in_data.add(metadata['service_code'])
 
-            logger.debug("[_batch_platform_search] Service codes in data: %s", sorted(service_codes_in_data))
+            logger.debug("[batch_platform_search] Service codes in data: %s", sorted(service_codes_in_data))
 
         if total_docs == 0:
-            logger.warning("[_batch_platform_search] Platform collection is empty")
+            logger.warning("[batch_platform_search] Platform collection is empty")
             return []
 
     except Exception as e:
-        logger.error("[_batch_platform_search] Error accessing platform collection: %s", str(e))
+        logger.error("[batch_platform_search] Error accessing platform collection: %s", str(e))
         return []
 
     all_platform_docs = []
-    platform_codes = [svc["code"] for svc in platform_services]
-    logger.debug("[_batch_platform_search] Platform codes: %s", platform_codes)
-    # logger.debug("[_batch_platform_search] Searching in platform services: %s", platform_codes)
+    platform_codes = [svc["code"] for svc in platform_services]  # Уже отфильтрованный список
+    logger.debug("[batch_platform_search] Searching in platform services: %s", platform_codes)
 
-    #  ТЕСТИРУЕМ РАЗНЫЕ СТРАТЕГИИ ФИЛЬТРАЦИИ
+    exclude_set = set(exclude_page_ids) if exclude_page_ids else set()
+
     for query in queries:
         try:
-            logger.debug("[_batch_platform_search] Searching query: '%s'", query[:100])
+            logger.debug("[batch_platform_search] Searching query: '%s'", query[:100])
 
-            #  СТРАТЕГИЯ 1: Попробуем БЕЗ ФИЛЬТРОВ вообще
-            # logger.debug("[_batch_platform_search] Trying search without any filters first...")
-            logger.debug("[_batch_platform_search] Attempting search without filters for query: '%s'", query[:100])
-
+            # ИСПРАВЛЕНИЕ: Ищем с простым фильтром, исключаем вручную
             docs = platform_store.similarity_search(
                 query,
-                k=20  # Берем больше для ручной фильтрации
+                k=(k_per_query * len(platform_services)) + len(exclude_set),
+                filter={"service_code": {"$in": platform_codes}}  # Используем отфильтрованный список
             )
 
-            logger.debug("[_batch_platform_search] Found %d docs without filters", len(docs))
-
-            #  Фильтруем вручную
-            filtered_docs = []
-            for doc in docs:
-                doc_service = doc.metadata.get('service_code')
-                doc_page_id = doc.metadata.get('page_id')
-
-                # Проверяем принадлежность к платформенным сервисам
-                if doc_service in platform_codes:
-                    # Проверяем исключения
-                    if not exclude_page_ids or doc_page_id not in exclude_page_ids:
-                        filtered_docs.append(doc)
-
-                        # Логируем первые несколько для отладки
-                        if len(filtered_docs) <= 3:
-                            logger.debug("[_batch_platform_search] Added doc: page_id=%s, service=%s",
-                                         doc_page_id, doc_service)
+            # Фильтруем исключения вручную
+            if exclude_set:
+                filtered_docs = [
+                    doc for doc in docs
+                    if doc.metadata.get('page_id') not in exclude_set
+                ]
+                logger.debug("[_batch_platform_search] Filtered %d -> %d docs (excluded %d)",
+                             len(docs), len(filtered_docs), len(docs) - len(filtered_docs))
+                docs = filtered_docs
 
             # Ограничиваем до нужного количества
-            filtered_docs = filtered_docs[:k_per_query]
-            all_platform_docs.extend(filtered_docs)
+            docs = docs[:k_per_query * len(platform_services)]
 
-            logger.debug("[_batch_platform_search] Query '%s' found %d platform docs (after manual filtering)",
-                         query[:50], len(filtered_docs))
+            all_platform_docs.extend(docs)
+            logger.debug("[batch_platform_search] Query '%s' found %d platform docs", query[:50], len(docs))
 
         except Exception as e:
-            logger.error("[_batch_platform_search] Error searching query '%s': %s", query[:50], str(e))
-            # Пропускаем этот запрос, но продолжаем со следующими
+            logger.error("[batch_platform_search] Error searching query '%s': %s", query[:50], str(e))
 
-    logger.info("[_batch_platform_search] -> Total platform docs found: %d", len(all_platform_docs))
+            # Fallback: Поиск вообще без фильтров
+            try:
+                logger.info("[batch_platform_search] Retrying query '%s' without filters", query[:50])
+                docs = platform_store.similarity_search(query, k=k_per_query * 3)
+
+                # Фильтруем вручную и по service_code, и по exclude_page_ids
+                filtered_docs = []
+                for doc in docs:
+                    doc_service = doc.metadata.get('service_code')
+                    doc_page_id = doc.metadata.get('page_id')
+
+                    if (doc_service in platform_codes and
+                            (not exclude_set or doc_page_id not in exclude_set)):
+                        filtered_docs.append(doc)
+
+                filtered_docs = filtered_docs[:k_per_query]
+                all_platform_docs.extend(filtered_docs)
+                logger.debug("[batch_platform_search] Fallback found %d docs", len(filtered_docs))
+
+            except Exception as e2:
+                logger.error("[batch_platform_search] Fallback also failed: %s", str(e2))
+
+    logger.info("[batch_platform_search] -> %d platform docs found", len(all_platform_docs))
     return all_platform_docs
 
 
@@ -296,31 +348,35 @@ def _smart_truncate_context(context: str, max_length: int) -> str:
 
 def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
     """
-    ИСПРАВЛЕНО: Извлечение контекста по ссылкам ТОЛЬКО из неподтвержденных (цветных) фрагментов.
-    Согласно постановке задачи: ссылки должны искаться только в неподтвержденных требованиях.
+    Извлечение контекста по ссылкам ТОЛЬКО из неподтвержденных (цветных) фрагментов.
+    Ссылки должны искаться только в неподтвержденных требованиях.
     """
+    logger.info("[_extract_linked_context_optimized] <- Processing %d pages for links from unconfirmed fragments",
+                 len(exclude_page_ids))
+
     if not exclude_page_ids:
         return []
 
     linked_docs = []
     max_linked_pages = 3
+    max_pages = 5
 
-    logger.debug("[_extract_linked_context_optimized] Processing %d pages for links from unconfirmed fragments",
-                 len(exclude_page_ids))
-
-    # Обрабатываем только первые несколько страниц
-    for page_id in exclude_page_ids[:5]:
+    # Обрабатываем только первые max_pages страниц
+    if len(exclude_page_ids) <= max_linked_pages:
+        logger.warning("[_extract_linked_context_optimized] page ids truncated to %d items", max_pages)
+    for page_id in exclude_page_ids[:max_pages]:
         try:
             content = get_page_content_by_id(page_id, clean_html=False)
             if not content:
                 continue
 
-            # ИСПРАВЛЕНИЕ: Ищем ссылки ТОЛЬКО в неподтвержденных фрагментах
+            # Ищем ссылки ТОЛЬКО в неподтвержденных фрагментах
             linked_page_ids = _extract_links_from_unconfirmed_fragments(content, exclude_page_ids)
             logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments of page %s",
                          len(linked_page_ids), page_id)
 
             # Ограничиваем количество ссылок на страницу
+            # TODO ограничивать нужно с учетом общего числа страниц, а не "в лоб". То есть учитывать "оставшиеся" токены.
             for linked_page_id in linked_page_ids[:2]:
                 if len(linked_docs) >= max_linked_pages:
                     break
@@ -329,8 +385,10 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
                 if linked_content and linked_content.strip():
                     linked_docs.append(linked_content)
                     logger.debug(
-                        "[_extract_linked_context_optimized] Added approved content from linked page %s (%d chars)",
+                        "[_extract_linked_context_optimized] Added approved content from linked page '%s' (%d chars)",
                         linked_page_id, len(linked_content))
+                    logger.debug("[_extract_linked_context_optimized] linked page '%s' approved data = {%s}",
+                                 linked_page_id, linked_content[:500] + "...")
 
             if len(linked_docs) >= max_linked_pages:
                 break
@@ -753,3 +811,145 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
             else:
                 raise
     return results
+
+def _search_data_models(entity_queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
+                        embeddings_model) -> List:
+    """
+    Специализированный поиск страниц с моделями данных
+
+    Args:
+        entity_queries: Запросы для поиска атрибутов сущностей
+        service_code: Код сервиса для поиска в сервисном хранилище
+        exclude_page_ids: Исключаемые страницы
+        embeddings_model: Модель эмбеддингов
+    """
+    if not entity_queries:
+        return []
+
+    logger.debug("[_search_data_models] Searching with %d entity queries for service: %s",
+                 len(entity_queries), service_code)
+
+    # 1. ПОИСК В ПЛАТФОРМЕННОМ СЕРВИСЕ dataModel (всегда)
+    platform_docs = search_in_platform_data_models(entity_queries, exclude_page_ids, embeddings_model)
+
+    # 2. ПОИСК В КОНКРЕТНОМ СЕРВИСНОМ ХРАНИЛИЩЕ
+    service_docs = search_in_service_data_models(entity_queries, service_code, exclude_page_ids, embeddings_model)
+
+    all_docs = platform_docs + service_docs
+
+    # 3. ДЕДУПЛИКАЦИЯ (могут быть пересечения)
+    unique_docs = _fast_deduplicate_documents(all_docs)
+
+    logger.info("[_search_data_models] -> Found %d unique data model documents", len(unique_docs))
+    return unique_docs
+
+
+
+def search_in_service_data_models(entity_queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
+                                  embeddings_model) -> List:
+    """Поиск моделей данных в конкретном сервисном хранилище"""
+    logger.debug("[search_in_service_data_models] <- %d entity queries: %s, service_code='%s', exclude_page_ids={%s}",
+                 len(entity_queries), entity_queries, service_code, exclude_page_ids)
+
+    try:
+        service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
+
+        # Фильтр для конкретного сервиса
+        base_filter = {"service_code": {"$eq": service_code}}
+        if exclude_page_ids:
+            filters = {
+                "$and": [
+                    base_filter,
+                    {"page_id": {"$nin": exclude_page_ids}}
+                ]
+            }
+        else:
+            filters = base_filter
+
+        logger.debug("[search_in_service_data_models] filter: %s", filters)
+        all_docs = []
+        for query in entity_queries:
+            try:
+                # equery = re.sub(r'([\[\]])', r'\\\1', query)  # Экранируем квадратные скобки
+                equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
+                logger.debug("[search_in_service_data_models] query: %s", equery)
+                docs = service_store.similarity_search(equery, k=3, filter=filters)
+
+                # Дополнительно фильтруем по признакам модели данных
+                model_docs = [doc for doc in docs if _is_data_model_page(doc)]
+                all_docs.extend(model_docs)
+
+                logger.debug("[search_in_service_data_models] Query '%s' in service %s found %d model docs",
+                             query[:50], service_code, len(model_docs))
+            except Exception as e:
+                logger.warning("[search_in_service_data_models] Error with query '%s': %s",
+                               query[:50], str(e))
+
+        logger.debug("[search_in_service_data_models] -> all_docs: %s", all_docs)
+        return all_docs
+
+    except Exception as e:
+        logger.error("[search_in_service_data_models] Error: %s", str(e))
+        return []
+
+
+def search_in_platform_data_models(entity_queries: List[str], exclude_page_ids: Optional[List[str]],
+                                   embeddings_model) -> List:
+    """Поиск в платформенном сервисе dataModel"""
+    logger.debug("[search_in_platform_data_models] <- exclude_page_ids={%s}, %d entity queries: %s",
+                 exclude_page_ids, len(entity_queries), entity_queries)
+    try:
+        platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
+
+        # Фильтр для dataModel платформенного сервиса
+        base_filter = {"service_code": {"$eq": "dataModel"}}
+        if exclude_page_ids:
+            filters = {
+                "$and": [
+                    base_filter,
+                    {"page_id": {"$nin": exclude_page_ids}}
+                ]
+            }
+        else:
+            filters = base_filter
+
+        logger.debug("[search_in_platform_data_models] filter: %s", filters)
+
+        all_docs = []
+        for query in entity_queries:
+            try:
+                # equery = re.sub(r'([\[\]])', r'\\\1', query) # Экранируем квадратные скобки
+                equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
+                logger.debug("[search_in_platform_data_models] query: %s", equery)
+                docs = platform_store.similarity_search(equery, k=3, filter=filters)
+                all_docs.extend(docs)
+                logger.debug("[search_in_platform_data_models] Query '%s' found %d docs",
+                             query[:50], len(docs))
+            except Exception as e:
+                logger.warning("[search_in_platform_data_models] Error with query '%s': %s",
+                               query[:100], str(e))
+
+        logger.debug("[search_in_platform_data_models] -> all_docs: %s", all_docs)
+        return all_docs
+
+    except Exception as e:
+        logger.error("[search_in_platform_data_models] Error: %s", str(e))
+        return []
+
+
+def _is_data_model_page(doc) -> bool:
+    """
+    Определяет, является ли страница описанием модели данных
+    Использует только НАДЕЖНЫЕ признаки
+    """
+    content = doc.page_content.lower()
+
+    # ГЛАВНЫЙ признак - наличие фразы "атрибутный состав сущности"
+    has_attribute_composition = 'атрибутный состав сущности' in content
+
+    if has_attribute_composition:
+        logger.debug("[_is_data_model_page] Document '%s' identified as data model (has 'атрибутный состав сущности')",
+                     doc.metadata.get('title', '')[:50])
+        return True
+
+    return False

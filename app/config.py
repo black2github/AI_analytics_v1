@@ -18,7 +18,7 @@ CONFLUENCE_PASSWORD = os.getenv("CONFLUENCE_PASSWORD")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4") # gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4-32k...
 LLM_TEMPERATURE = os.getenv("LLM_TEMPERATURE", "0.2")
-APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.5.0")
 
 # openai | huggingface
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "huggingface")

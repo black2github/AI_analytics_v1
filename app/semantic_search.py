@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)  # Лучше использовать __na
 
 def extract_key_queries(requirements_text: str) -> List[str]:
     """
-    УЛУЧШЕННАЯ версия: Извлекает ключевые запросы + специальные запросы для сущностей
+    Извлекает ключевые запросы + специальные запросы для сущностей
     """
     logger.info("[extract_key_queries] <- text length: %d chars", len(requirements_text))
 
@@ -143,184 +143,85 @@ def extract_entity_attribute_queries(requirements_text: str) -> List[str]:
 def _extract_entity_chains(text: str) -> List[dict]:
     """
     Извлекает цепочки сущность.атрибут на основе правил оформления
+    Извлечение сущностей и атрибутов
+
+    Поддержка кавычек: "Клиент Банка".<идентификатор записи>
+    Поддержка апострофов: 'Заявка на выпуск'.<статус>
+    Поддержка квадратных скобок: [[КК_ВК] Заявка на выпуск карты].<Статус документа>
+    Поддержка простых названий: Сущность10.<атрибут 1>
+    Поддержка иерархических ссылок: [Сущ1].<[Сущ2]>.<атрибут>
     """
     chains = []
 
-    # ДОБАВЛЕНО: Паттерн для одного элемента (сущность или атрибут)
-    element_patterns = [
-        r'"([^"]{1,50})"',  # Двойные кавычки
-        r"'([^']{1,50})'",  # Одинарные кавычки
-        r'<([^>]{1,50})>',  # Треугольные скобки
-        r'\[([^\]]{1,50})\]',  # Квадратные скобки
-        r'\b([А-Яа-яA-Za-z][А-Яа-яA-Za-z0-9_]{0,49})\b'  # Простые названия без кавычек
+    # ИСПРАВЛЕНО: Правильный паттерн для квадратных скобок БЕЗ точек внутри
+    chain_patterns = [
+        # 1. Цепочки и иерархические ссылки
+        r'\[([\[\]\s\w]{1,50})\]\.<\[([\[\]\s\w]{1,50})\]>\.<([^>]{1,50})>',  # [Сущ1].<[Сущ2]>.<атр>
+        r'\[([\[\]\s\w]{1,50})\]\.<\[([\[\]\s\w]{1,50})\]>\.\"([^\"]{1,50})\"',  # [Сущ1].<[Сущ2]>."атр"
+
+        r'"([^"]{1,50})"\."([^"]{1,50})"\.<([^>]{1,50})>',
+        r'"([^"]{1,50})"\."([^"]{1,50})"\."([^"]{1,50})"',
+
+        r"'([^']{1,50})'\.'([^']{1,50})'\.<([^>]{1,50})>",
+
+        # 2. ИСПРАВЛЕНО: Одиночные ссылки в квадратных скобках БЕЗ точек
+        r'\[([\[\]\s\w]{1,50})\]\.<([^>]{1,50})>',  # [Название без точек].<атрибут>
+        r'\[([\[\]\s\w]{1,50})\]\."([^"]{1,50})"',  # [Название]."атрибут"
+        r'\[([\[\]\s\w]{1,50})\]\.\'([^\']{1,50})\'',  # [Название].'атрибут'
+
+        # 3. Кавычки
+        r'"([^"]{1,50})"\.<([^>]{1,50})>',
+        r'"([^"]{1,50})"\."([^"]{1,50})"',
+
+        r"'([^']{1,50})'\.<([^>]{1,50})>",
+        r"'([^']{1,50})'\.'([^']{1,50})'",
+
+        # 4. Простые названия (в последнюю очередь)
+        r'\b([А-Яа-яA-Za-z][А-Яа-яA-Za-z0-9_]{2,49})\.<([^>]{1,50})>',
+        r'\b([А-Яа-яA-Za-z][А-Яа-яA-Za-z0-9_]{2,49})\."([^"]{1,50})"',
     ]
 
-    # Объединяем все паттерны
-    combined_pattern = '|'.join(f'({pattern})' for pattern in element_patterns)
+    for pattern in chain_patterns:
+        matches = re.finditer(pattern, text, re.UNICODE)
 
-    # Паттерн для цепочки: элемент.элемент.элемент...
-    chain_pattern = f'(?:{combined_pattern})(?:\.(?:{combined_pattern}))+'
+        for match in matches:
+            # Получаем все группы (исключаем None)
+            groups = [g.strip() for g in match.groups() if g and g.strip()]
 
-    matches = re.finditer(chain_pattern, text, re.UNICODE)
+            if len(groups) >= 2:
+                # Все группы кроме последней - сущности
+                entities = groups[:-1]
+                # Последняя группа - атрибут
+                final_attribute = groups[-1]
 
-    for match in matches:
-        full_match = match.group(0)
-        logger.debug("[_extract_entity_chains] Processing full match: '%s'", full_match)
+                # Фильтрация простых названий
+                filtered_entities = []
+                for entity in entities:
+                    # Проверяем, что сущность не является стоп-словом
+                    if (len(entity.split()) <= 5 and
+                            len(entity) >= 3 and
+                            entity.lower() not in ['или', 'для', 'при', 'как', 'что', 'это', 'проверить', 'значение']):
+                        filtered_entities.append(entity)
 
-        # Разбиваем цепочку на элементы и извлекаем текст
-        elements = []
+                if filtered_entities and final_attribute:
+                    # Проверяем, что такая цепочка еще не найдена
+                    chain_key = (tuple(filtered_entities), final_attribute)
+                    existing_chain = any(
+                        (tuple(chain['entities']), chain['final_attribute']) == chain_key
+                        for chain in chains
+                    )
 
-        # Ищем все отдельные элементы в цепочке
-        for i, element_pattern in enumerate(element_patterns):
-            element_matches = re.finditer(element_pattern, full_match, re.UNICODE)
-            for element_match in element_matches:
-                # Для разных паттернов группы могут быть в разных местах
-                element_text = None
-                for group_idx in range(1, element_match.lastindex + 1 if element_match.lastindex else 1):
-                    if element_match.group(group_idx):
-                        element_text = element_match.group(group_idx).strip()
-                        break
-
-                if element_text and len(element_text.split()) <= 5:
-                    # Дополнительная проверка для простых названий
-                    if i == 4:  # Паттерн для простых названий (последний в списке)
-                        # Проверяем, что это действительно похоже на название сущности
-                        if len(element_text) >= 3 and not element_text.lower() in ['или', 'для', 'при', 'как', 'что',
-                                                                                   'это']:
-                            elements.append({
-                                'text': element_text,
-                                'position': element_match.start(),
-                                'type': 'simple_name'
-                            })
-                    else:
-                        elements.append({
-                            'text': element_text,
-                            'position': element_match.start(),
-                            'type': 'formatted'
+                    if not existing_chain:
+                        chains.append({
+                            'entities': filtered_entities,
+                            'final_attribute': final_attribute,
+                            'full_match': match.group(0)
                         })
 
-        # Сортируем элементы по позиции в исходном тексте
-        elements.sort(key=lambda x: x['position'])
-
-        if len(elements) >= 2:  # Минимум сущность.атрибут
-            entities = [elem['text'] for elem in elements[:-1]]  # Все кроме последнего
-            final_attribute = elements[-1]['text']  # Последний элемент
-
-            chains.append({
-                'entities': entities,
-                'final_attribute': final_attribute,
-                'full_match': full_match
-            })
-
-            logger.debug("[_extract_entity_chains] Found chain: entities=%s, attribute='%s'",
-                         entities, final_attribute)
+                        logger.debug("[_extract_entity_chains] Pattern matched: entities=%s, attribute='%s'",
+                                     filtered_entities, final_attribute)
 
     return chains
-
-
-# def _extract_text_from_formatting(formatted_text: str) -> str:
-#     """
-#     Извлекает текст из различных форматов оформления
-#     """
-#     text = formatted_text.strip()
-#
-#     # Двойные кавычки
-#     if text.startswith('"') and text.endswith('"'):
-#         return text[1:-1].strip()
-#
-#     # Одинарные кавычки
-#     if text.startswith("'") and text.endswith("'"):
-#         return text[1:-1].strip()
-#
-#     # Треугольные скобки
-#     if text.startswith('<') and text.endswith('>'):
-#         return text[1:-1].strip()
-#
-#     # Квадратные скобки (ссылки)
-#     if text.startswith('[') and text.endswith(']'):
-#         return text[1:-1].strip()
-#
-#     # Если ничего не подошло, возвращаем как есть (но это не должно происходить)
-#     return text
-
-
-# def _extract_hierarchical_entities(text: str) -> List[tuple]:
-#     """
-#     Извлекает иерархические ссылки типа [Сущность1].<[Сущность2]>.<атрибут>
-#     """
-#     hierarchical_entities = []
-#
-#     # Паттерн для иерархических ссылок: [Сущность].<[Сущность]>.<атрибут>
-#     pattern = r'\[([^\]]+)\]\.<\[([^\]]+)\]>\.<([^>]+)>'
-#
-#     matches = re.finditer(pattern, text, re.UNICODE)
-#
-#     for match in matches:
-#         parent_entity = match.group(1).strip()
-#         child_entity = match.group(2).strip()
-#         attribute_name = match.group(3).strip()
-#
-#         # ИСПРАВЛЕНИЕ: Очищаем названия сущностей
-#         parent_clean = _clean_entity_name(parent_entity)
-#         child_clean = _clean_entity_name(child_entity)
-#
-#         if parent_clean:
-#             # Добавляем родительскую сущность со ссылкой на дочернюю как "атрибут"
-#             hierarchical_entities.append((parent_clean, child_clean))
-#
-#         if child_clean:
-#             # Добавляем дочернюю сущность с реальным атрибутом
-#             hierarchical_entities.append((child_clean, attribute_name))
-#
-#         logger.debug(
-#             "[_extract_hierarchical_entities] Found hierarchical: parent='%s'->%s, child='%s'->%s, attribute='%s'",
-#             parent_entity, parent_clean, child_entity, child_clean, attribute_name)
-#
-#     return hierarchical_entities
-
-
-# def _remove_hierarchical_patterns(text: str) -> str:
-#     """
-#     Удаляет иерархические паттерны из текста, чтобы они не мешали обычной обработке
-#     """
-#     # Заменяем иерархические ссылки на пустые строки
-#     pattern = r'\[([^\]]+)\]\.<\[([^\]]+)\]>\.<([^>]+)>'
-#     cleaned_text = re.sub(pattern, '', text, flags=re.UNICODE)
-#
-#     # Убираем лишние пробелы
-#     cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
-#
-#     return cleaned_text
-
-
-# def _clean_entity_name(entity_name: str) -> str:
-#     """
-#     Очищает название сущности от лишних слов в начале
-#     """
-#     # Список слов, которые нужно убрать из начала
-#     stop_words_start = [
-#         'проверить', 'проверяем', 'проверяется', 'проверим',
-#         'установить', 'устанавливаем', 'устанавливается',
-#         'значение', 'поле', 'атрибут', 'если', 'когда', 'при',
-#         'в', 'на', 'для', 'по', 'со', 'из', 'от', 'до',
-#         'должен', 'должна', 'должно', 'может', 'могут',
-#         'является', 'равен', 'равна', 'равно'
-#     ]
-#
-#     words = entity_name.split()
-#
-#     # Убираем стоп-слова с начала
-#     while words and words[0].lower() in stop_words_start:
-#         words.pop(0)
-#
-#     # Возвращаем очищенное название
-#     cleaned = ' '.join(words).strip()
-#
-#     # Дополнительная проверка - должно остаться хотя бы 2 символа
-#     if len(cleaned) < 2:
-#         return ""
-#
-#     return cleaned
 
 
 def extract_simple_keywords(text: str) -> List[str]:
@@ -389,10 +290,10 @@ def _search_by_entity_title(entity_names: List[str], service_code: str, exclude_
     Поиск страниц с точным совпадением title с именем сущности
     Это самый точный способ найти модель данных сущности
     """
+    logger.debug("[_search_by_entity_title] <- Searching by exact title match for entities: %s", entity_names)
+
     if not entity_names:
         return []
-
-    logger.debug("[_search_by_entity_title] Searching by exact title match for entities: %s", entity_names)
 
     found_docs = []
 
@@ -410,36 +311,51 @@ def _search_by_entity_title(entity_names: List[str], service_code: str, exclude_
 
 def _search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Optional[List[str]],
                                  embeddings_model) -> List:
-    """Поиск по title в платформенном dataModel сервисе"""
+    """Поиск по всем title в платформенном dataModel сервисе"""
+    logger.debug("[_search_by_title_in_platform] <- Searching by title match for entities: %s", entity_names)
+
+    if not entity_names:
+        return []
+
     try:
         platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
 
-        # Получаем ВСЕ документы dataModel сервиса
-        base_filter = {"service_code": {"$eq": "dataModel"}}
+        # Очищаем названия сущностей
+        cleaned_entity_names = [name.strip() for name in entity_names if name.strip()]
+
+        if not cleaned_entity_names:
+            return []
+
+        # Ищем сразу по всем сущностям одним запросом
+        # ✅ ИСПРАВЛЕНИЕ: Строим один оптимальный фильтр
+        filters = {
+            "$and": [
+                {"service_code": {"$eq": "dataModel"}},
+                {"title": {"$in": cleaned_entity_names}}  # Сразу фильтруем по нужным title
+            ]
+        }
+
+        # Добавляем исключение page_ids если нужно
         if exclude_page_ids:
-            filters = {
-                "$and": [
-                    base_filter,
-                    {"page_id": {"$nin": exclude_page_ids}}
-                ]
-            }
-        else:
-            filters = base_filter
+            filters["$and"].append({"page_id": {"$nin": exclude_page_ids}})
 
-        # Используем пустой запрос для получения всех документов с фильтром
-        all_docs = platform_store.similarity_search("", k=1000, filter=filters)  # Большой k для получения всех
+        logger.debug("[_search_by_title_in_platform] Optimized filter: %s", filters)
 
-        # Фильтруем по точному совпадению title
-        matched_docs = []
-        for doc in all_docs:
-            doc_title = doc.metadata.get('title', '').strip()
-            for entity_name in entity_names:
-                if doc_title == entity_name.strip():
-                    matched_docs.append(doc)
-                    logger.debug("[_search_by_title_in_platform] Exact match: '%s'", doc_title)
-                    break
+        # Один запрос для всех сущностей
+        docs = platform_store.similarity_search(
+            query="",  # Пустой запрос, полагаемся только на фильтры
+            k=len(cleaned_entity_names) * 5,  # k = количество сущностей * возможные дубли
+            filter=filters
+        )
 
-        return matched_docs
+        logger.debug("[_search_by_title_in_platform] Found %d docs for entities: %s",
+                     len(docs), cleaned_entity_names)
+
+        # Логируем какие именно сущности найдены
+        found_titles = set(doc.metadata.get('title', '') for doc in docs)
+        logger.info("[_search_by_title_in_platform] -> Found documents for entities: %s", sorted(found_titles))
+
+        return docs
 
     except Exception as e:
         logger.error("[_search_by_title_in_platform] Error: %s", str(e))
@@ -448,36 +364,50 @@ def _search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Opti
 
 def _search_by_title_in_service(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
                                 embeddings_model) -> List:
-    """Поиск по title в сервисном хранилище"""
+    """Поиск по всем title в сервисном хранилище"""
+    if not entity_names:
+        return []
+
     try:
         service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
 
-        # Фильтр для конкретного сервиса
-        base_filter = {"service_code": {"$eq": service_code}}
+        # Очищаем названия сущностей
+        cleaned_entity_names = [name.strip() for name in entity_names if name.strip()]
+
+        if not cleaned_entity_names:
+            return []
+
+        # ИСПРАВЛЕНО: Ищем сразу по всем сущностям одним запросом
+        # ✅ ИСПРАВЛЕНИЕ: Строим один оптимальный фильтр
+        base_filter = {
+            "$and": [
+                {"service_code": {"$eq": "dataModel"}},
+                {"title": {"$in": cleaned_entity_names}}  # Сразу фильтруем по нужным title
+            ]
+        }
+
+        # Добавляем исключение page_ids если нужно
         if exclude_page_ids:
-            filters = {
-                "$and": [
-                    base_filter,
-                    {"page_id": {"$nin": exclude_page_ids}}
-                ]
-            }
-        else:
-            filters = base_filter
+            base_filter["$and"].append({"page_id": {"$nin": exclude_page_ids}})
 
-        # Получаем все документы сервиса
-        all_docs = service_store.similarity_search("", k=1000, filter=filters)
+        logger.debug("[_search_by_title_in_platform] Optimized filter: %s", base_filter)
 
-        # Фильтруем по точному совпадению title
-        matched_docs = []
-        for doc in all_docs:
-            doc_title = doc.metadata.get('title', '').strip()
-            for entity_name in entity_names:
-                if doc_title == entity_name.strip():
-                    matched_docs.append(doc)
-                    logger.debug("[_search_by_title_in_service] Exact match in %s: '%s'", service_code, doc_title)
-                    break
+        # Один запрос для всех сущностей
+        docs = service_store.similarity_search(
+            query="",  # Пустой запрос, полагаемся только на фильтры
+            k=len(cleaned_entity_names) * 3,  # k = количество сущностей * возможные дубли
+            filter=base_filter
+        )
 
-        return matched_docs
+        logger.debug("[_search_by_title_in_service] Found %d docs for entities: %s in service %s",
+                     len(docs), cleaned_entity_names, service_code)
+
+        # Логируем какие именно сущности найдены
+        found_titles = set(doc.metadata.get('title', '') for doc in docs)
+        logger.info("[_search_by_title_in_service] -> Found documents for entities: %s in service %s",
+                    sorted(found_titles), service_code)
+
+        return docs
 
     except Exception as e:
         logger.error("[_search_by_title_in_service] Error: %s", str(e))
@@ -498,5 +428,5 @@ def extract_entity_names_from_requirements(requirements_text: str) -> List[str]:
             if entity_name not in entity_names and len(entity_name.split()) <= 5:
                 entity_names.append(entity_name)
 
-    logger.debug("[extract_entity_names_from_requirements] Found entity names: %s", entity_names)
+    logger.debug("[extract_entity_names_from_requirements] -> entity names: %s", entity_names)
     return entity_names
