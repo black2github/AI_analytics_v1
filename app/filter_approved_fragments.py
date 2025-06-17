@@ -8,7 +8,7 @@ import sys
 import io
 from app.history_cleaner import remove_history_sections
 
-logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+logger = logging.getLogger(__name__)
 
 def is_strictly_black_color(color_value: str) -> bool:
     """Проверяет черный цвет и часть цветов из верхней строки редактора Confluence"""
@@ -21,9 +21,36 @@ def is_strictly_black_color(color_value: str) -> bool:
         'rgb(0,51,0)', 'rgb(0, 51, 0)',
         'rgb(0,51,102)', 'rgb(0, 51, 102)',
         'rgb(51,51,51)', 'rgb(51, 51, 51)',
-        'rgb(23,43,77)', 'rgb(23, 43, 77)'  # Этот цвет тоже может быть черным
+        'rgb(23,43,77)', 'rgb(23, 43, 77)'
     }
     return color_value in black_colors
+
+
+def _clean_bracket_content(content: str) -> str:
+    """Умная очистка содержимого треугольных скобок"""
+    if not content:
+        return ''
+
+    # 1. Убираем лишние пробелы в начале и конце
+    content = content.strip()
+
+    # 2. Нормализуем множественные пробелы
+    content = re.sub(r'\s+', ' ', content)
+
+    # 3. ИСПРАВЛЕНИЕ: Правильная обработка кавычек
+    # Убираем пробел ПОСЛЕ открывающей кавычки: " текст -> "текст
+    content = re.sub(r'"\s+', '"', content)
+    # Убираем пробел ПЕРЕД закрывающей кавычкой: текст " -> текст"
+    content = re.sub(r'\s+"', '"', content)
+    # НО добавляем пробел ПЕРЕД открывающей кавычкой, если его нет
+    content = re.sub(r'(\w)"', r'\1 "', content)  # слово"текст -> слово "текст
+
+    # 4. Обработка квадратных скобок аналогично
+    content = re.sub(r'\[\s+', '[', content)  # [ текст -> [текст
+    content = re.sub(r'\s+\]', ']', content)  # текст ] -> текст]
+
+    return content
+
 
 def has_colored_style(element: Tag) -> bool:
     """Проверяет, имеет ли элемент цветной стиль"""
@@ -50,9 +77,7 @@ def filter_approved_fragments(html: str) -> str:
     if not html or not html.strip():
         return ""
 
-    # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ В НАЧАЛЕ
     html = remove_history_sections(html)
-
     soup = BeautifulSoup(html, "html.parser")
 
     # Извлекаем содержимое expand блоков
@@ -77,8 +102,8 @@ def filter_approved_fragments(html: str) -> str:
         if isinstance(element, NavigableString):
             text = str(element).strip()
             if text:
-                return False  # Текстовый узел без стиля = подтвержденный
-            return None  # Пустой текст
+                return False
+            return None
 
         if isinstance(element, Tag):
             if element.name in ["br", "ac:structured-macro"]:
@@ -86,12 +111,12 @@ def filter_approved_fragments(html: str) -> str:
 
             text_content = element.get_text(strip=True)
             if not text_content:
-                return None  # Нет текста
+                return None
 
             if has_colored_style(element):
-                return True  # Цветной блок
+                return True
             else:
-                return False  # Подтвержденный блок
+                return False
 
         return None
 
@@ -108,7 +133,6 @@ def filter_approved_fragments(html: str) -> str:
         except ValueError:
             return True
 
-        # Ищем ближайший текстовый блок СЛЕВА
         left_block_status = None
         for i in range(link_index - 1, -1, -1):
             status = get_text_block_color_status(all_children[i])
@@ -116,7 +140,6 @@ def filter_approved_fragments(html: str) -> str:
                 left_block_status = status
                 break
 
-        # Ищем ближайший текстовый блок СПРАВА
         right_block_status = None
         for i in range(link_index + 1, len(all_children)):
             status = get_text_block_color_status(all_children[i])
@@ -124,7 +147,6 @@ def filter_approved_fragments(html: str) -> str:
                 right_block_status = status
                 break
 
-        # Применяем правила
         if left_block_status is None and right_block_status is None:
             return True
         elif left_block_status is None:
@@ -132,7 +154,6 @@ def filter_approved_fragments(html: str) -> str:
         elif right_block_status is None:
             right_block_status = left_block_status
 
-        # Если ОБА соседних блока цветные - ссылка исключается
         if left_block_status and right_block_status:
             return False
         else:
@@ -146,7 +167,6 @@ def filter_approved_fragments(html: str) -> str:
         if not isinstance(element, Tag):
             return ""
 
-        # Если элемент имеет явно черный стиль - извлекаем его содержимое
         style = element.get("style", "").lower()
         if "color" in style:
             color_match = re.search(r'color\s*:\s*([^;]+)', style)
@@ -155,14 +175,12 @@ def filter_approved_fragments(html: str) -> str:
                 if is_strictly_black_color(color_value):
                     return extract_approved_text(element)
 
-        # Рекурсивный поиск черных элементов
         approved_parts = []
 
         for child in element.children:
             if isinstance(child, NavigableString):
                 continue
             elif isinstance(child, Tag):
-                # ===== ПРОВЕРЯЕМ ЧЕРНЫЕ ЦВЕТА НАПРЯМУЮ =====
                 child_style = child.get("style", "").lower()
                 child_is_black = False
 
@@ -173,39 +191,37 @@ def filter_approved_fragments(html: str) -> str:
                         child_is_black = is_strictly_black_color(color_value)
 
                 if child_is_black:
-                    # Черный дочерний элемент - извлекаем напрямую
                     child_text = child.get_text(strip=True)
                     if child_text:
                         approved_parts.append(child_text)
                 elif has_colored_style(child):
-                    # Цветной дочерний элемент - рекурсивно ищем в нем черные части
                     child_text = extract_black_elements_from_colored_container(child)
                     if child_text:
                         approved_parts.append(child_text)
                 else:
-                    # Элемент без цвета - обрабатываем как обычно
                     child_text = extract_approved_text(child)
                     if child_text:
                         approved_parts.append(child_text)
 
-        # Соединяем БЕЗ лишних пробелов
-        result = "".join(approved_parts)
-        result = re.sub(r'\s+', ' ', result)  # Нормализуем whitespace
+        result = " ".join(approved_parts)
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+        result = re.sub(r'<\s*>', '<>', result)
+        result = re.sub(r'[ \t]{2,}', ' ', result)
+
         return result.strip()
 
     def extract_approved_text(element) -> str:
         """Извлекает только подтвержденный текст из элемента"""
+
         if isinstance(element, NavigableString):
-            return str(element).strip()
+            return str(element)
 
         if not isinstance(element, Tag):
             return ""
 
-        # Игнорируем зачеркнутый текст всегда
         if element.name == "s":
             return ""
 
-        # Игнорируем Jira макросы всегда и ВСЕ их параметры
         if element.name == "ac:structured-macro" and element.get("ac:name") == "jira":
             return ""
 
@@ -214,13 +230,11 @@ def filter_approved_fragments(html: str) -> str:
                 element.parent.get("ac:name") == "jira":
             return ""
 
-        # Время - только если элемент подтвержден
         if element.name == "time" and element.get("datetime"):
             if not has_colored_style(element) and not is_in_colored_ancestor_chain(element):
                 return element["datetime"]
             return ""
 
-        # Обработка ссылок
         if element.name in ["a", "ac:link"]:
             if is_in_colored_ancestor_chain(element):
                 return ""
@@ -236,52 +250,52 @@ def filter_approved_fragments(html: str) -> str:
             else:
                 return ""
 
-        # Если элемент сам имеет цветной стиль - ищем только черные дочерние элементы
         if has_colored_style(element):
             return extract_black_elements_from_colored_container(element)
 
-        # Элемент не имеет цветного стиля, но проверяем предков
         if is_in_colored_ancestor_chain(element):
             return ""
 
-        # ===== ИСПРАВЛЕНИЕ: БОЛЕЕ ТОЧНАЯ ОБРАБОТКА БЕЗ ЛИШНИХ ПРОБЕЛОВ =====
+        # ИСПРАВЛЕНИЕ: Более умная обработка дочерних элементов
         result_parts = []
+        prev_was_tag = False
 
         for child in element.children:
             if isinstance(child, NavigableString):
-                # Текстовый узел - сохраняем как есть (включая пробелы)
                 text = str(child)
-                if text:  # Не делаем strip() здесь!
+                if text:
                     result_parts.append(text)
+                    prev_was_tag = False
             elif isinstance(child, Tag):
-                # Для тегов извлекаем содержимое рекурсивно
                 child_text = extract_approved_text(child)
-                if child_text:  # Здесь тоже не делаем strip()!
+                if child_text:
+                    # добавляем пробел между тегами, если нужно
+                    if prev_was_tag and result_parts and not result_parts[-1].endswith(' ') and not child_text.startswith(' '):
+                        result_parts.append(' ')
                     result_parts.append(child_text)
+                    prev_was_tag = True
 
-        # Соединяем БЕЗ дополнительных пробелов
         result = "".join(result_parts)
 
-        # Более умная нормализация whitespace
-        # Сначала нормализуем горизонтальные пробелы
-        result = re.sub(r'[ \t]+', ' ', result)
+        # Убираем ВСЕ пробелы и переносы строк внутри треугольных скобок
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+        result = re.sub(r'<\s*>', '<>', result)
+        result = re.sub(r'[ \t]{2,}', ' ', result)
+        result = re.sub(r'\n+', ' ', result)
+        result = re.sub(r' {2,}', ' ', result)
 
-        # Затем убираем лишние переносы строк, но оставляем одиночные
-        result = re.sub(r'\n\s*\n+', '\n\n', result)
+        if isinstance(element, Tag) and element.name == "li":
+            li_style = element.get("style", "")
+            is_colored = has_colored_style(element)
+            result_text = result.strip()
 
-        # И только в самом конце делаем общую нормализацию (если нет списков)
-        if not re.search(r'[-*+]\s|\d+\.\s', result):  # Если нет маркеров списков
-            result = re.sub(r'\s+', ' ', result)
-
-        return result.strip()  # strip() только в самом конце
+        return result.strip()
 
     def process_table_cell(cell, is_nested=False):
         """Обрабатывает содержимое ячейки таблицы"""
         nested_table = cell.find("table")
 
         if nested_table:
-            # Ячейка содержит вложенную таблицу
-            # Сначала извлекаем текст ДО таблицы
             text_before = ""
             for child in cell.children:
                 if child == nested_table:
@@ -291,10 +305,8 @@ def filter_approved_fragments(html: str) -> str:
                 elif isinstance(child, Tag) and child.name != "table":
                     text_before += extract_approved_text(child)
 
-            # Обрабатываем вложенную таблицу
             nested_table_html = process_nested_table_to_html(nested_table)
 
-            # Извлекаем текст ПОСЛЕ таблицы
             text_after = ""
             found_table = False
             for child in cell.children:
@@ -307,7 +319,6 @@ def filter_approved_fragments(html: str) -> str:
                     elif isinstance(child, Tag) and child.name != "table":
                         text_after += extract_approved_text(child)
 
-            # Объединяем результат
             result_parts = []
             if text_before.strip():
                 result_parts.append(text_before.strip())
@@ -318,11 +329,9 @@ def filter_approved_fragments(html: str) -> str:
 
             return " ".join(result_parts)
         else:
-            # ===== УЛУЧШЕННАЯ ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
             lists = cell.find_all(["ul", "ol"], recursive=False)
 
             if lists:
-                # В ячейке есть списки - обрабатываем их отдельно
                 cell_parts = []
 
                 for child in cell.children:
@@ -332,33 +341,25 @@ def filter_approved_fragments(html: str) -> str:
                             cell_parts.append(text)
                     elif isinstance(child, Tag):
                         if child.name in ["ul", "ol"]:
-                            # ИСПРАВЛЕНИЕ: Обрабатываем список с сохранением структуры
                             list_content = process_list_in_cell(child, 0)
                             if list_content:
                                 cell_parts.append(list_content)
                         else:
-                            # Обычный элемент (p, div, span, etc.)
                             text = extract_approved_text(child)
                             if text.strip():
                                 cell_parts.append(text.strip())
 
-                # ИСПРАВЛЕНИЕ: Правильное соединение
-                return "\n".join(cell_parts)
+                return " ".join(cell_parts)
             else:
-                # СПЕЦИАЛЬНАЯ ПРОВЕРКА: Возможно список обернут в div или p
-                # Ищем списки глубже в структуре
                 deep_lists = cell.find_all(["ul", "ol"], recursive=True)
                 if deep_lists:
-                    # Найдены списки глубже - обрабатываем всю ячейку как содержащую списки
                     cell_content = extract_approved_text(cell)
 
-                    # Проверяем, есть ли в результате признаки списков
                     if any(line.strip().startswith(marker) for line in cell_content.split('\n')
                            for marker in ['-', '*', '+']) or \
                             any(re.match(r'^\s*\d+\.', line.strip()) for line in cell_content.split('\n')):
-                        return cell_content  # Возвращаем как есть, если уже есть маркеры
+                        return cell_content
 
-                    # Если маркеров нет, пытаемся обработать списки принудительно
                     result_parts = []
                     for child in cell.children:
                         if isinstance(child, NavigableString):
@@ -366,30 +367,25 @@ def filter_approved_fragments(html: str) -> str:
                             if text:
                                 result_parts.append(text)
                         elif isinstance(child, Tag):
-                            child_text = extract_approved_text_for_lists(child)  # Новая функция!
+                            child_text = extract_approved_text_for_lists(child)
                             if child_text:
                                 result_parts.append(child_text)
 
                     return "\n".join(result_parts)
                 else:
-                    # Обычная ячейка без списков
                     return extract_approved_text(cell)
 
     def extract_approved_text_for_lists(element) -> str:
         """Специальная функция для извлечения списков из цветных контейнеров"""
-        from bs4 import Tag, NavigableString
-
         if isinstance(element, NavigableString):
             return str(element).strip()
 
         if not isinstance(element, Tag):
             return ""
 
-        # Если это список - обрабатываем как список
         if element.name in ["ul", "ol"]:
             return process_list_in_cell(element, 0)
 
-        # Если это контейнер со списком внутри
         lists = element.find_all(["ul", "ol"], recursive=False)
         if lists:
             result_parts = []
@@ -411,7 +407,6 @@ def filter_approved_fragments(html: str) -> str:
 
             return "\n".join(result_parts)
 
-        # Обычная обработка
         return extract_approved_text(element)
 
     def process_nested_table_to_html(table: Tag) -> str:
@@ -437,7 +432,6 @@ def filter_approved_fragments(html: str) -> str:
             for cell in cells:
                 tag_name = "th" if cell.name == "th" else "td"
 
-                # Получаем атрибуты rowspan/colspan
                 attrs = []
                 if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
                     attrs.append(f'rowspan="{cell["rowspan"]}"')
@@ -446,7 +440,6 @@ def filter_approved_fragments(html: str) -> str:
 
                 attrs_str = " " + " ".join(attrs) if attrs else ""
 
-                # ИСПРАВЛЕНИЕ 3: Специальная обработка ссылок во вложенных таблицах
                 cell_content = extract_approved_text_for_nested_table(cell)
                 row_parts.append(f"<{tag_name}{attrs_str}>{cell_content}</{tag_name}>")
 
@@ -459,39 +452,31 @@ def filter_approved_fragments(html: str) -> str:
     def extract_approved_text_for_nested_table(element) -> str:
         """Специальная функция для извлечения текста из вложенных таблиц"""
         if isinstance(element, NavigableString):
-            return str(element).strip()
+            return str(element)
 
         if not isinstance(element, Tag):
             return ""
 
-        # Игнорируем зачеркнутый текст всегда
         if element.name == "s":
             return ""
 
-        # Игнорируем Jira макросы всегда
         if element.name == "ac:structured-macro" and element.get("ac:name") == "jira":
             return ""
 
-        # Время - только если элемент подтвержден
         if element.name == "time" and element.get("datetime"):
             if not has_colored_style(element) and not is_in_colored_ancestor_chain(element):
                 return element["datetime"]
             return ""
 
-        # ИСПРАВЛЕНИЕ 4: Упрощенная обработка ссылок для вложенных таблиц
         if element.name in ["a", "ac:link"]:
-            # НОВАЯ ЛОГИКА: Проверяем сам элемент ссылки и его прямого родителя
             if has_colored_style(element):
-                return ""  # Цветная ссылка - исключаем
+                return ""
 
-            # ИСПРАВЛЕНИЕ: Проверяем родительский элемент только на один уровень вверх
-            # и только если он не является ячейкой таблицы
             parent = element.parent
             if parent and isinstance(parent, Tag) and parent.name not in ["td", "th"]:
                 if has_colored_style(parent):
-                    return ""  # Ссылка в цветном контейнере - исключаем
+                    return ""
 
-            # Для подтвержденных ссылок
             ri_page = element.find("ri:page")
             if ri_page and ri_page.get("ri:content-title"):
                 return f'[{ri_page["ri:content-title"]}]'
@@ -500,11 +485,9 @@ def filter_approved_fragments(html: str) -> str:
             else:
                 return ""
 
-        # Специальная обработка списков во вложенных таблицах
         if element.name in ["ul", "ol"]:
             return process_list_in_nested_table_approved(element, 0)
 
-        #  Проверяем, есть ли списки в элементе
         lists = element.find_all(["ul", "ol"], recursive=False)
         if lists:
             result_parts = []
@@ -526,12 +509,10 @@ def filter_approved_fragments(html: str) -> str:
 
             return "\n".join(result_parts)
 
-        # Если элемент сам цветной - ищем черные дочерние элементы
         if has_colored_style(element):
             approved_parts = []
             for child in element.children:
                 if isinstance(child, Tag):
-                    # ИСПРАВЛЕНИЕ: Рекурсивно вызываем функцию для дочерних элементов
                     child_text = extract_approved_text_for_nested_table(child)
                     if child_text:
                         approved_parts.append(child_text)
@@ -539,13 +520,8 @@ def filter_approved_fragments(html: str) -> str:
                     text = str(child).strip()
                     if text:
                         approved_parts.append(text)
-            # Убираем лишние пробелы
             return "".join(approved_parts)
 
-        # ИСПРАВЛЕНИЕ: Убираем проверку цветных предков для вложенных таблиц
-        # Это позволит обрабатывать черные ссылки в цветных ячейках
-
-        # ИСПРАВЛЕНИЕ: Рекурсивно обрабатываем дочерние элементы БЕЗ ЛИШНИХ ПРОБЕЛОВ
         result_parts = []
         for child in element.children:
             if isinstance(child, NavigableString):
@@ -557,12 +533,10 @@ def filter_approved_fragments(html: str) -> str:
                 if child_text:
                     result_parts.append(child_text)
 
-        # Соединяем БЕЗ лишних пробелов
-        result = "".join(result_parts)  # Было " ".join(child_texts)
-
-        # Нормализуем пробелы
-        result = re.sub(r'[ \t]+', ' ', result)
-        result = re.sub(r'\s+', ' ', result)  # Нормализуем ВСЕ whitespace символы
+        result = "".join(result_parts)
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+        result = re.sub(r'<\s*>', '<>', result)
+        result = re.sub(r'[ \t]{2,}', ' ', result)
 
         return result.strip()
 
@@ -580,6 +554,10 @@ def filter_approved_fragments(html: str) -> str:
         item_counter = 1
 
         for li in list_element.find_all("li", recursive=False):
+            # ИСПРАВЛЕНИЕ: Проверяем цвет элемента li
+            if has_colored_style(li):
+                continue  # Пропускаем цветные элементы списка
+
             # Извлекаем ТОЛЬКО подтвержденное содержимое элемента li
             item_text = extract_approved_text(li)
 
@@ -600,6 +578,61 @@ def filter_approved_fragments(html: str) -> str:
         return "\n".join(list_items)
 
 
+    def process_list(list_element: Tag, indent_level: int = 0) -> str:
+        """Обрабатывает список с поддержкой вложенности"""
+        list_items = []
+        indent = "    " * indent_level
+
+        if list_element.name == "ul":
+            markers = ["-", "*", "+"]
+            marker = markers[indent_level % len(markers)]
+        else:
+            marker = None
+
+        item_counter = 1
+
+        for li in list_element.find_all("li", recursive=False):
+            li_style = li.get("style", "")
+            is_colored = has_colored_style(li)
+
+            # ИСПРАВЛЕНИЕ: Пропускаем цветные элементы списка
+            if is_colored:
+                continue
+
+            # Остальная логика без изменений...
+            item_content_parts = []
+
+            for child in li.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        item_content_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        continue
+                    else:
+                        text = extract_approved_text(child)
+                        if text.strip():
+                            item_content_parts.append(text.strip())
+
+            item_text = " ".join(item_content_parts)
+
+            if item_text.strip():
+                if list_element.name == "ul":
+                    list_items.append(f"{indent}{marker} {item_text.strip()}")
+                else:
+                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
+                    item_counter += 1
+
+            # Обрабатываем вложенные списки
+            nested_lists = li.find_all(["ul", "ol"], recursive=False)
+            for nested_list in nested_lists:
+                nested_content = process_list(nested_list, indent_level + 1)
+                if nested_content:
+                    list_items.append(nested_content)
+
+        return "\n".join(list_items)
+
     def process_table(table: Tag) -> str:
         """Обрабатывает таблицу с гибридной разметкой"""
         rows = table.find_all("tr", recursive=False)
@@ -617,19 +650,16 @@ def filter_approved_fragments(html: str) -> str:
         for i, row in enumerate(rows):
             cells = row.find_all(["td", "th"], recursive=False)
             row_data = []
-            row_has_content = False  # Переносим проверку выше
+            row_has_content = False
 
             is_header_row = all(cell.name == "th" for cell in cells)
 
             for cell in cells:
-                # Получаем содержимое ячейки
                 cell_content = process_table_cell(cell)
 
-                # Проверяем, есть ли реальное содержимое в ячейке
                 if cell_content and cell_content.strip():
                     row_has_content = True
 
-                # Добавляем HTML атрибуты для объединения ячеек
                 html_attrs = []
                 if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
                     html_attrs.append(f'rowspan="{cell["rowspan"]}"')
@@ -644,73 +674,15 @@ def filter_approved_fragments(html: str) -> str:
 
                 row_data.append(cell_text)
 
-            # Добавляем строку только если в ней есть реальное содержимое
             if row_has_content:
                 if is_header_row and not has_headers:
-                    # Первая строка заголовков
                     table_lines.append("| " + " | ".join(row_data) + " |")
                     table_lines.append("|" + "|".join([" --- " for _ in row_data]) + "|")
                     has_headers = True
                 else:
-                    # Обычная строка данных
                     table_lines.append("| " + " | ".join(row_data) + " |")
 
         return "\n".join(table_lines) if table_lines else ""
-
-    def process_list(list_element: Tag, indent_level: int = 0) -> str:
-        """Обрабатывает список с поддержкой вложенности"""
-        list_items = []
-        indent = "    " * indent_level  # 4 пробела на уровень
-
-        # Определяем символы для разных уровней вложенности
-        if list_element.name == "ul":
-            # Для ненумерованных списков чередуем символы по уровням
-            markers = ["-", "*", "+"]
-            marker = markers[indent_level % len(markers)]
-        else:
-            # Для нумерованных списков всегда цифры с точкой
-            marker = None  # будем добавлять номер динамически
-
-        item_counter = 1
-
-        for li in list_element.find_all("li", recursive=False):
-            # Извлекаем прямое содержимое элемента li (без вложенных списков)
-            item_content_parts = []
-
-            for child in li.children:
-                if isinstance(child, NavigableString):
-                    text = str(child).strip()
-                    if text:
-                        item_content_parts.append(text)
-                elif isinstance(child, Tag):
-                    if child.name in ["ul", "ol"]:
-                        # Вложенный список обработаем отдельно
-                        continue
-                    else:
-                        # Обычный текстовый элемент
-                        text = extract_approved_text(child)
-                        if text.strip():
-                            item_content_parts.append(text.strip())
-
-            # Формируем основной текст пункта
-            item_text = " ".join(item_content_parts)
-
-            if item_text.strip():
-                # Добавляем маркер и отступ
-                if list_element.name == "ul":
-                    list_items.append(f"{indent}{marker} {item_text.strip()}")
-                else:
-                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
-                    item_counter += 1
-
-            # Обрабатываем вложенные списки
-            nested_lists = li.find_all(["ul", "ol"], recursive=False)
-            for nested_list in nested_lists:
-                nested_content = process_list(nested_list, indent_level + 1)
-                if nested_content:
-                    list_items.append(nested_content)
-
-        return "\n".join(list_items)
 
     def process_elements_sequentially(container) -> List[str]:
         """Обрабатывает элементы в том порядке, как они идут в HTML"""
@@ -718,18 +690,15 @@ def filter_approved_fragments(html: str) -> str:
 
         for element in container.find_all(True, recursive=False):
             if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                # Заголовки
                 header_text = extract_approved_text(element)
                 if header_text.strip():
                     level_prefix = "#" * int(element.name[1])
                     result_parts.append(f"{level_prefix} {header_text.strip()}")
 
             elif element.name == "table":
-                # Таблицы с маркером
                 table_content = process_table(element)
                 if table_content.strip():
                     result_parts.append(f"**Таблица:**\n{table_content}")
-
 
             elif element.name in ["ul", "ol"]:
                 # Списки с поддержкой вложенности
@@ -738,35 +707,36 @@ def filter_approved_fragments(html: str) -> str:
                     result_parts.append(list_content)
 
             elif element.name == "p":
-                # Параграфы
                 para_text = extract_approved_text(element)
                 if para_text.strip():
                     result_parts.append(para_text.strip())
 
             elif element.name in ["div", "span"]:
-                # Обработка div/span элементов
-                div_text = extract_approved_text(element)
-                if div_text.strip():
-                    result_parts.append(div_text.strip())
+                # ИСПРАВЛЕНИЕ: Сначала проверяем, есть ли заголовки внутри div
+                inner_headers = element.find_all(["h1", "h2", "h3", "h4", "h5", "h6"], recursive=False)
+                if inner_headers:
+                    # Если есть заголовки - обрабатываем рекурсивно
+                    nested_parts = process_elements_sequentially(element)
+                    result_parts.extend(nested_parts)
+                else:
+                    # Обычная обработка div/span элементов
+                    div_text = extract_approved_text(element)
+                    if div_text.strip():
+                        result_parts.append(div_text.strip())
 
             elif element.name == "ac:rich-text-body":
-                # Рекурсивно обрабатываем содержимое
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
-            # ===== ДОБАВЛЯЕМ ОБРАБОТКУ CONFLUENCE LAYOUT =====
             elif element.name == "ac:layout":
-                # Обрабатываем layout контейнер
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
             elif element.name == "ac:layout-section":
-                # Обрабатываем секцию layout
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
             elif element.name == "ac:layout-cell":
-                # Обрабатываем ячейку layout
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
@@ -786,7 +756,6 @@ def filter_approved_fragments(html: str) -> str:
         item_counter = 1
 
         for li in list_element.find_all("li", recursive=False):
-            # ИСПРАВЛЕНИЕ: Извлекаем содержимое элемента li БЕЗ вложенных списков
             item_content_parts = []
 
             for child in li.children:
@@ -796,26 +765,21 @@ def filter_approved_fragments(html: str) -> str:
                         item_content_parts.append(text)
                 elif isinstance(child, Tag):
                     if child.name in ["ul", "ol"]:
-                        # Вложенный список обработаем отдельно
                         continue
                     else:
-                        # Обычный текстовый элемент
                         text = extract_approved_text(child)
                         if text.strip():
                             item_content_parts.append(text.strip())
 
-            # Формируем основной текст пункта
             item_text = " ".join(item_content_parts)
 
             if item_text.strip():
-                # Добавляем маркер и отступ
                 if list_element.name == "ul":
                     list_items.append(f"{indent}{marker} {item_text.strip()}")
                 else:
                     list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
                     item_counter += 1
 
-            # ИСПРАВЛЕНИЕ: Обрабатываем вложенные списки отдельно
             nested_lists = li.find_all(["ul", "ol"], recursive=False)
             for nested_list in nested_lists:
                 nested_content = process_list_in_cell(nested_list, indent_level + 1)
@@ -826,39 +790,15 @@ def filter_approved_fragments(html: str) -> str:
 
     # Основная обработка
     approved_fragments = process_elements_sequentially(soup)
-    # В конце функции filter_approved_fragments, перед return:
     result = "\n\n".join(approved_fragments)
-    result = re.sub(r'\n\s*\n+', '\n\n', result)
-    # ===== ИСПРАВЛЕНИЕ: УБИРАЕМ ЛИШНИЕ ПРОБЕЛЫ =====
-    result = re.sub(r'[ \t]+', ' ', result)  # Заменяем множественные пробелы на один
-    result = re.sub(r' +\.', '.', result)  # Убираем пробелы перед точками
-    result = re.sub(r' +,', ',', result)  # Убираем пробелы перед запятыми
+
+    # Финальная очистка
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+    result = re.sub(r'<\s*>', '<>', result)
+    result = re.sub(r'\]\s+\.', '].', result)
+    result = re.sub(r'>\s+\.', '>.', result)
 
     logger.info("[filter_approved_fragments] -> {%s}", result)
-
+    # В конце функции filter_approved_fragments, перед return:
     return result.strip()
-
-
-# Тестирование
-if __name__ == "__main__":
-
-    # Настройка кодировки для Windows консоли
-    if sys.platform == "win32":
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
-
-    def test_pointwise_fixes():
-        """Тест точечных исправлений"""
-
-        html_content = ''' '''
-
-        result = filter_approved_fragments(html_content)
-
-        print("=" * 80)
-        print(f"Результат:")
-        print(result)
-        print("=" * 80)
-
-
-    # Запускаем тест
-    test_pointwise_fixes()

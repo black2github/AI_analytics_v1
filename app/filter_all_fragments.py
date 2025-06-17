@@ -8,7 +8,33 @@ import sys
 import io
 from app.history_cleaner import remove_history_sections
 
-logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+logger = logging.getLogger(__name__)
+
+
+def _clean_bracket_content(content: str) -> str:
+    """Умная очистка содержимого треугольных скобок"""
+    if not content:
+        return ''
+
+    # 1. Убираем лишние пробелы в начале и конце
+    content = content.strip()
+
+    # 2. Нормализуем множественные пробелы
+    content = re.sub(r'\s+', ' ', content)
+
+    # 3. ИСПРАВЛЕНИЕ: Правильная обработка кавычек
+    # Убираем пробел ПОСЛЕ открывающей кавычки: " текст -> "текст
+    content = re.sub(r'"\s+', '"', content)
+    # Убираем пробел ПЕРЕД закрывающей кавычкой: текст " -> текст"
+    content = re.sub(r'\s+"', '"', content)
+    # НО добавляем пробел ПЕРЕД открывающей кавычкой, если его нет
+    content = re.sub(r'(\w)"', r'\1 "', content)  # слово"текст -> слово "текст
+
+    # 4. Обработка квадратных скобок аналогично
+    content = re.sub(r'\[\s+', '[', content)  # [ текст -> [текст
+    content = re.sub(r'\s+\]', ']', content)  # текст ] -> текст]
+
+    return content
 
 def filter_all_fragments(html: str) -> str:
     """
@@ -19,9 +45,7 @@ def filter_all_fragments(html: str) -> str:
     if not html or not html.strip():
         return ""
 
-    # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ В НАЧАЛЕ
     html = remove_history_sections(html)
-
     soup = BeautifulSoup(html, "html.parser")
 
     # Извлекаем содержимое expand блоков
@@ -33,7 +57,7 @@ def filter_all_fragments(html: str) -> str:
     def extract_all_text(element) -> str:
         """Извлекает весь текст из элемента независимо от цвета"""
         if isinstance(element, NavigableString):
-            return str(element).strip()
+            return str(element)
 
         if not isinstance(element, Tag):
             return ""
@@ -46,7 +70,6 @@ def filter_all_fragments(html: str) -> str:
         if element.name == "ac:structured-macro" and element.get("ac:name") == "jira":
             return ""
 
-        # Игнорируем ВСЕ параметры Jira макросов
         if element.name == "ac:parameter" and element.parent and \
                 element.parent.name == "ac:structured-macro" and \
                 element.parent.get("ac:name") == "jira":
@@ -66,34 +89,40 @@ def filter_all_fragments(html: str) -> str:
             else:
                 return ""
 
-        # ИСПРАВЛЕНИЕ: Более точная обработка БЕЗ ЛИШНИХ ПРОБЕЛОВ
+        # ИСПРАВЛЕНИЕ: Более умная обработка дочерних элементов
         result_parts = []
+        prev_was_tag = False
 
         for child in element.children:
             if isinstance(child, NavigableString):
-                # Текстовый узел - сохраняем как есть (включая пробелы)
                 text = str(child)
-                if text:  # Не делаем strip() здесь!
+                if text:
                     result_parts.append(text)
+                    prev_was_tag = False
             elif isinstance(child, Tag):
-                # Для тегов извлекаем содержимое рекурсивно
                 child_text = extract_all_text(child)
-                if child_text:  # Здесь тоже не делаем strip()!
+                if child_text:
+                    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: добавляем пробел между тегами, если нужно
+                    if prev_was_tag and result_parts and not result_parts[-1].endswith(
+                            ' ') and not child_text.startswith(' '):
+                        result_parts.append(' ')
                     result_parts.append(child_text)
+                    prev_was_tag = True
 
         # Соединяем БЕЗ дополнительных пробелов
         result = "".join(result_parts)
 
-        # Более умная нормализация whitespace
-        # Сначала нормализуем горизонтальные пробелы
-        result = re.sub(r'[ \t]+', ' ', result)
+        # Нормализация
+        result = re.sub(r'[ \t]{2,}', ' ', result)
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+        result = re.sub(r'<\s*>', '<>', result)
 
-        # Затем убираем лишние переносы строк, но оставляем одиночные
-        result = re.sub(r'\n\s*\n+', '\n\n', result)
+        # ДОБАВЛЯЕМ: замена переносов строк на пробелы внутри одного элемента
+        result = re.sub(r'\n+', ' ', result)
+        result = re.sub(r' {2,}', ' ', result)
 
-        # И только если нет маркеров списков, делаем полную нормализацию
-        if not re.search(r'[-*+]\s|\d+\.\s', result):
-            result = re.sub(r'\s+', ' ', result)
+        result = re.sub(r'\]\s+\.', '].', result)
+        result = re.sub(r'>\s+\.', '>.', result)
 
         return result.strip()
 
@@ -102,8 +131,6 @@ def filter_all_fragments(html: str) -> str:
         nested_table = cell.find("table")
 
         if nested_table:
-            # Ячейка содержит вложенную таблицу
-            # (существующий код остается без изменений)
             text_before = ""
             for child in cell.children:
                 if child == nested_table:
@@ -137,12 +164,9 @@ def filter_all_fragments(html: str) -> str:
 
             return "".join(result_parts)
         else:
-            # ===== ОБРАБОТКА СПИСКОВ В ЯЧЕЙКАХ =====
-            # Ячейка без вложенной таблицы - проверяем наличие списков
             lists = cell.find_all(["ul", "ol"], recursive=False)
 
             if lists:
-                # В ячейке есть списки - обрабатываем их отдельно
                 cell_parts = []
 
                 for child in cell.children:
@@ -152,23 +176,18 @@ def filter_all_fragments(html: str) -> str:
                             cell_parts.append(text)
                     elif isinstance(child, Tag):
                         if child.name in ["ul", "ol"]:
-                            # ИСПРАВЛЕНИЕ: Используем правильную функцию
-                            list_content = process_list_in_cell_all(child, 0)  # ← ЭТА СТРОКА КЛЮЧЕВАЯ!
+                            list_content = process_list_in_cell_all(child, 0)
                             if list_content:
                                 cell_parts.append(list_content)
                         else:
-                            # Обычный элемент
                             text = extract_all_text(child)
                             if text.strip():
                                 cell_parts.append(text.strip())
 
-                # ИСПРАВЛЕНИЕ: Правильное соединение
-                return "\n".join(cell_parts)  # ← ВСЕГДА используем переносы для ячеек со списками
+                return "\n".join(cell_parts)
             else:
-                # СПЕЦИАЛЬНАЯ ПРОВЕРКА: Ищем списки глубже
                 deep_lists = cell.find_all(["ul", "ol"], recursive=True)
                 if deep_lists:
-                    # Принудительная обработка списков
                     result_parts = []
                     for child in cell.children:
                         if isinstance(child, NavigableString):
@@ -176,30 +195,25 @@ def filter_all_fragments(html: str) -> str:
                             if text:
                                 result_parts.append(text)
                         elif isinstance(child, Tag):
-                            child_text = extract_all_text_for_lists(child)  # Новая функция!
+                            child_text = extract_all_text_for_lists(child)
                             if child_text:
                                 result_parts.append(child_text)
 
                     return "\n".join(result_parts)
                 else:
-                    # Обычная ячейка без списков
                     return extract_all_text(cell)
 
     def extract_all_text_for_lists(element) -> str:
         """Специальная функция для извлечения списков из любых контейнеров"""
-        from bs4 import Tag, NavigableString
-
         if isinstance(element, NavigableString):
             return str(element).strip()
 
         if not isinstance(element, Tag):
             return ""
 
-        # Если это список - обрабатываем как список
         if element.name in ["ul", "ol"]:
             return process_list_in_cell_all(element, 0)
 
-        # Если это контейнер со списком внутри
         lists = element.find_all(["ul", "ol"], recursive=False)
         if lists:
             result_parts = []
@@ -221,8 +235,10 @@ def filter_all_fragments(html: str) -> str:
 
             return "\n".join(result_parts)
 
-        # Обычная обработка
-        return extract_all_text(element)
+        result = extract_all_text(element)
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+
+        return result
 
     def process_nested_table_to_html(table: Tag) -> str:
         """Преобразует вложенную таблицу в HTML"""
@@ -247,7 +263,6 @@ def filter_all_fragments(html: str) -> str:
             for cell in cells:
                 tag_name = "th" if cell.name == "th" else "td"
 
-                # Получаем атрибуты rowspan/colspan
                 attrs = []
                 if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
                     attrs.append(f'rowspan="{cell["rowspan"]}"')
@@ -256,7 +271,6 @@ def filter_all_fragments(html: str) -> str:
 
                 attrs_str = " " + " ".join(attrs) if attrs else ""
 
-                # Извлекаем все содержимое ячейки
                 cell_content = extract_all_text_for_nested_table(cell)
                 row_parts.append(f"<{tag_name}{attrs_str}>{cell_content}</{tag_name}>")
 
@@ -274,19 +288,15 @@ def filter_all_fragments(html: str) -> str:
         if not isinstance(element, Tag):
             return ""
 
-        # Игнорируем зачеркнутый текст всегда
         if element.name == "s":
             return ""
 
-        # Игнорируем Jira макросы всегда
         if element.name == "ac:structured-macro" and element.get("ac:name") == "jira":
             return ""
 
-        # Время
         if element.name == "time" and element.get("datetime"):
             return element["datetime"]
 
-        # Обработка ссылок для вложенных таблиц
         if element.name in ["a", "ac:link"]:
             ri_page = element.find("ri:page")
             if ri_page and ri_page.get("ri:content-title"):
@@ -296,11 +306,9 @@ def filter_all_fragments(html: str) -> str:
             else:
                 return ""
 
-        # НОВОЕ: Специальная обработка списков во вложенных таблицах
         if element.name in ["ul", "ol"]:
             return process_list_in_nested_table_all(element, 0)
 
-        # НОВОЕ: Проверяем, есть ли списки в элементе
         lists = element.find_all(["ul", "ol"], recursive=False)
         if lists:
             result_parts = []
@@ -322,7 +330,6 @@ def filter_all_fragments(html: str) -> str:
 
             return "\n".join(result_parts)
 
-        # ИСПРАВЛЕНИЕ: Рекурсивно обрабатываем дочерние элементы
         result_parts = []
         for child in element.children:
             if isinstance(child, NavigableString):
@@ -334,18 +341,17 @@ def filter_all_fragments(html: str) -> str:
                 if child_text:
                     result_parts.append(child_text)
 
-        # ИСПРАВЛЕНИЕ: Соединяем БЕЗ пробелов
         result = "".join(result_parts)
-
-        # Нормализуем пробелы
         result = re.sub(r'[ \t]+', ' ', result)
 
-        # НЕ нормализуем переносы строк для списков во вложенных таблицах
+        # ДОБАВИТЬ: Применяем очистку треугольных скобок
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+        result = re.sub(r'<\s*>', '<>', result)
+
         if not re.search(r'[-*+]\s|\d+\.\s', result):
             result = re.sub(r'\s+', ' ', result)
 
         return result.strip()
-
 
     def process_list_in_nested_table_all(list_element: Tag, indent_level: int = 0) -> str:
         """Обрабатывает список во вложенной таблице для filter_all_fragments"""
@@ -361,7 +367,6 @@ def filter_all_fragments(html: str) -> str:
         item_counter = 1
 
         for li in list_element.find_all("li", recursive=False):
-            # Извлекаем содержимое элемента li БЕЗ вложенных списков
             item_content_parts = []
 
             for child in li.children:
@@ -371,33 +376,33 @@ def filter_all_fragments(html: str) -> str:
                         item_content_parts.append(text)
                 elif isinstance(child, Tag):
                     if child.name in ["ul", "ol"]:
-                        # Вложенный список обработаем отдельно
                         continue
                     else:
-                        # Обычный текстовый элемент - используем простую обработку для вложенных таблиц
-                        text = child.get_text(strip=True)  # Простое извлечение текста
+                        text = child.get_text(strip=True)
                         if text:
                             item_content_parts.append(text)
 
-            # Формируем основной текст пункта
             item_text = " ".join(item_content_parts)
 
             if item_text.strip():
-                # Добавляем маркер и отступ
                 if list_element.name == "ul":
                     list_items.append(f"{indent}{marker} {item_text.strip()}")
                 else:
                     list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
                     item_counter += 1
 
-            # Обрабатываем вложенные списки отдельно
             nested_lists = li.find_all(["ul", "ol"], recursive=False)
             for nested_list in nested_lists:
                 nested_content = process_list_in_nested_table_all(nested_list, indent_level + 1)
                 if nested_content:
                     list_items.append(nested_content)
 
-        return "\n".join(list_items)
+        result = "\n".join(list_items)
+
+        # ДОБАВИТЬ: Очистка треугольных скобок в результате
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+
+        return result
 
 
     def process_table(table: Tag) -> str:
@@ -421,10 +426,8 @@ def filter_all_fragments(html: str) -> str:
             is_header_row = all(cell.name == "th" for cell in cells)
 
             for cell in cells:
-                # Получаем содержимое ячейки
                 cell_content = process_table_cell(cell)
 
-                # Добавляем HTML атрибуты для объединения ячеек
                 html_attrs = []
                 if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
                     html_attrs.append(f'rowspan="{cell["rowspan"]}"')
@@ -439,14 +442,11 @@ def filter_all_fragments(html: str) -> str:
 
                 row_data.append(cell_text)
 
-            # Добавляем строку с данными
             if is_header_row and not has_headers:
-                # Первая строка заголовков
                 table_lines.append("| " + " | ".join(row_data) + " |")
                 table_lines.append("|" + "|".join([" --- " for _ in row_data]) + "|")
                 has_headers = True
             else:
-                # Обычная строка данных
                 table_lines.append("| " + " | ".join(row_data) + " |")
 
         return "\n".join(table_lines) if table_lines else ""
@@ -454,62 +454,7 @@ def filter_all_fragments(html: str) -> str:
     def process_list(list_element: Tag, indent_level: int = 0) -> str:
         """Обрабатывает список с поддержкой вложенности"""
         list_items = []
-        indent = "    " * indent_level  # 4 пробела на уровень
-
-        # Определяем символы для разных уровней вложенности
-        if list_element.name == "ul":
-            # Для ненумерованных списков чередуем символы по уровням
-            markers = ["-", "*", "+"]
-            marker = markers[indent_level % len(markers)]
-        else:
-            # Для нумерованных списков всегда цифры с точкой
-            marker = None  # будем добавлять номер динамически
-
-        item_counter = 1
-
-        for li in list_element.find_all("li", recursive=False):
-            # Извлекаем прямое содержимое элемента li (без вложенных списков)
-            item_content_parts = []
-
-            for child in li.children:
-                if isinstance(child, NavigableString):
-                    text = str(child).strip()
-                    if text:
-                        item_content_parts.append(text)
-                elif isinstance(child, Tag):
-                    if child.name in ["ul", "ol"]:
-                        # Вложенный список обработаем отдельно
-                        continue
-                    else:
-                        # Обычный текстовый элемент
-                        text = extract_all_text(child)
-                        if text.strip():
-                            item_content_parts.append(text.strip())
-
-            # Формируем основной текст пункта
-            item_text = " ".join(item_content_parts)
-
-            if item_text.strip():
-                # Добавляем маркер и отступ
-                if list_element.name == "ul":
-                    list_items.append(f"{indent}{marker} {item_text.strip()}")
-                else:
-                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
-                    item_counter += 1
-
-            # Обрабатываем вложенные списки
-            nested_lists = li.find_all(["ul", "ol"], recursive=False)
-            for nested_list in nested_lists:
-                nested_content = process_list(nested_list, indent_level + 1)
-                if nested_content:
-                    list_items.append(nested_content)
-
-        return "\n".join(list_items)
-
-    def process_list_in_cell_all(list_element: Tag, indent_level: int = 0) -> str:
-        """Обрабатывает список в ячейке таблицы для filter_all_fragments (ВСЕ фрагменты)"""
-        list_items = []
-        indent = "    " * indent_level  # 4 пробела на уровень
+        indent = "    " * indent_level
 
         if list_element.name == "ul":
             markers = ["-", "*", "+"]
@@ -520,7 +465,6 @@ def filter_all_fragments(html: str) -> str:
         item_counter = 1
 
         for li in list_element.find_all("li", recursive=False):
-            # ИСПРАВЛЕНИЕ: Извлекаем содержимое элемента li БЕЗ вложенных списков
             item_content_parts = []
 
             for child in li.children:
@@ -530,33 +474,85 @@ def filter_all_fragments(html: str) -> str:
                         item_content_parts.append(text)
                 elif isinstance(child, Tag):
                     if child.name in ["ul", "ol"]:
-                        # Вложенный список обработаем отдельно
                         continue
                     else:
-                        # Обычный текстовый элемент
                         text = extract_all_text(child)
                         if text.strip():
                             item_content_parts.append(text.strip())
 
-            # Формируем основной текст пункта
             item_text = " ".join(item_content_parts)
 
             if item_text.strip():
-                # Добавляем маркер и отступ
                 if list_element.name == "ul":
                     list_items.append(f"{indent}{marker} {item_text.strip()}")
                 else:
                     list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
                     item_counter += 1
 
-            # ИСПРАВЛЕНИЕ: Обрабатываем вложенные списки отдельно
+            nested_lists = li.find_all(["ul", "ol"], recursive=False)
+            for nested_list in nested_lists:
+                nested_content = process_list(nested_list, indent_level + 1)
+                if nested_content:
+                    list_items.append(nested_content)
+
+        result = "\n".join(list_items)
+
+        # Очистка треугольных скобок в результате
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+
+        return result
+
+
+    def process_list_in_cell_all(list_element: Tag, indent_level: int = 0) -> str:
+        """Обрабатывает список в ячейке таблицы для filter_all_fragments (ВСЕ фрагменты)"""
+        list_items = []
+        indent = "    " * indent_level
+
+        if list_element.name == "ul":
+            markers = ["-", "*", "+"]
+            marker = markers[indent_level % len(markers)]
+        else:
+            marker = None
+
+        item_counter = 1
+
+        for li in list_element.find_all("li", recursive=False):
+            item_content_parts = []
+
+            for child in li.children:
+                if isinstance(child, NavigableString):
+                    text = str(child).strip()
+                    if text:
+                        item_content_parts.append(text)
+                elif isinstance(child, Tag):
+                    if child.name in ["ul", "ol"]:
+                        continue
+                    else:
+                        text = extract_all_text(child)
+                        if text.strip():
+                            item_content_parts.append(text.strip())
+
+            item_text = " ".join(item_content_parts)
+
+            if item_text.strip():
+                if list_element.name == "ul":
+                    list_items.append(f"{indent}{marker} {item_text.strip()}")
+                else:
+                    list_items.append(f"{indent}{item_counter}. {item_text.strip()}")
+                    item_counter += 1
+
             nested_lists = li.find_all(["ul", "ol"], recursive=False)
             for nested_list in nested_lists:
                 nested_content = process_list_in_cell_all(nested_list, indent_level + 1)
                 if nested_content:
                     list_items.append(nested_content)
 
-        return "\n".join(list_items)
+        result = "\n".join(list_items)
+
+        # ✅ ДОБАВИТЬ: Очистка треугольных скобок в результате
+        result = re.sub(r'<\s*([^<>]*?)\s*>', lambda m: f'<{_clean_bracket_content(m.group(1))}>', result)
+
+        return result
 
     def process_elements_sequentially(container) -> List[str]:
         """Обрабатывает элементы в том порядке, как они идут в HTML"""
@@ -564,116 +560,67 @@ def filter_all_fragments(html: str) -> str:
 
         for element in container.find_all(True, recursive=False):
             if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                # Заголовки
                 header_text = extract_all_text(element)
                 if header_text.strip():
                     level_prefix = "#" * int(element.name[1])
                     result_parts.append(f"{level_prefix} {header_text.strip()}")
 
             elif element.name == "table":
-                # Таблицы с маркером
                 table_content = process_table(element)
                 if table_content.strip():
                     result_parts.append(f"**Таблица:**\n{table_content}")
 
             elif element.name in ["ul", "ol"]:
-                # Списки с поддержкой вложенности
-                list_content = process_list(element, 0)  # начинаем с уровня 0
+                list_content = process_list(element, 0)
                 if list_content:
                     result_parts.append(list_content)
 
             elif element.name == "p":
-                # Параграфы
                 para_text = extract_all_text(element)
                 if para_text.strip():
                     result_parts.append(para_text.strip())
 
             elif element.name in ["div", "span"]:
-                # Обработка div/span элементов
-                div_text = extract_all_text(element)
-                if div_text.strip():
-                    result_parts.append(div_text.strip())
+                # ИСПРАВЛЕНИЕ: Сначала проверяем, есть ли заголовки внутри div
+                inner_headers = element.find_all(["h1", "h2", "h3", "h4", "h5", "h6"], recursive=False)
+                if inner_headers:
+                    # Если есть заголовки - обрабатываем рекурсивно
+                    nested_parts = process_elements_sequentially(element)
+                    result_parts.extend(nested_parts)
+                else:
+                    # Обычная обработка div/span элементов
+                    div_text = extract_all_text(element)
+                    if div_text.strip():
+                        result_parts.append(div_text.strip())
 
             elif element.name == "ac:rich-text-body":
-                # Рекурсивно обрабатываем содержимое
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
-            # ===== ДОБАВЛЯЕМ ОБРАБОТКУ CONFLUENCE LAYOUT =====
             elif element.name == "ac:layout":
-                # Обрабатываем layout контейнер
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
             elif element.name == "ac:layout-section":
-                # Обрабатываем секцию layout
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
             elif element.name == "ac:layout-cell":
-                # Обрабатываем ячейку layout
                 nested_parts = process_elements_sequentially(element)
                 result_parts.extend(nested_parts)
 
         return result_parts
 
-
     # Основная обработка
     all_fragments = process_elements_sequentially(soup)
     result = "\n\n".join(all_fragments)
     result = re.sub(r'\n\s*\n+', '\n\n', result)
-    # result = re.sub(r'[ \t]+', ' ', result)
 
-    logger.info("[filter_all_fragments] -> {%s}", result[:500]+"...")
+    # Финальная очистка пробелов перед точками
+    result = re.sub(r'\]\s+\.', '].', result)
+    result = re.sub(r'>\s+\.', '>.', result)
 
+    logger.info("[filter_all_fragments] -> {%s}", result[:500] + "...")
+    # В конце функции filter_all_fragments, перед return:
+    print(f"DEBUG all result: '{result}'")
     return result.strip()
-
-
-# Тестирование
-if __name__ == "__main__":
-
-    # Настройка кодировки для Windows консоли
-    if sys.platform == "win32":
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
-
-    def test_all_fragments():
-        """Тест извлечения всех фрагментов"""
-
-        html_content = ''' '''
-        result = filter_all_fragments(html_content)
-
-        print("=" * 80)
-        print("ТЕСТ ИЗВЛЕЧЕНИЯ ВСЕХ ФРАГМЕНТОВ:")
-        print(f"Результат:")
-        print(result)
-        print("=" * 80)
-
-
-    def test_link_spacing_fix():
-        """Тест исправления лишних пробелов в ссылках"""
-
-        html = '''
-        <span style="color: rgb(0,0,0);">
-            <span style="color: rgb(0,51,102);">
-                <a href="/pages/viewpage.action?pageId=42670178">[КК_БК] Заявка на блокировку карты</a>
-            </span>,
-        </span>
-        '''
-
-        result = filter_all_fragments(html)
-        print(f"Результат: '{result}'")
-
-        # Проверяем, что нет лишних пробелов
-        assert result.strip() == "[[КК_БК] Заявка на блокировку карты],"
-        # Не должно быть: "- [[КК_БК] Заявка на блокировку карты] ,"
-
-        print("V Тест прошел! Лишние пробелы убраны.")
-
-
-    if __name__ == "__main__":
-
-        test_link_spacing_fix()
-
-    # Запускаем тест
-    # test_all_fragments()
