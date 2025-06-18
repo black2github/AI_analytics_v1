@@ -22,7 +22,7 @@ from app.service_registry import (
 from app.template_registry import get_template_by_type
 from app.semantic_search import extract_key_queries, deduplicate_documents, extract_entity_names_from_requirements, \
     _search_by_entity_title, extract_entity_attribute_queries
-from app.filter_approved_fragments import has_colored_style
+from app.style_utils import has_colored_style
 
 llm = get_llm()
 logger = logging.getLogger(__name__)
