@@ -20,8 +20,8 @@ from app.service_registry import (
     resolve_service_code_by_user
 )
 from app.template_registry import get_template_by_type
-from app.semantic_search import extract_key_queries, deduplicate_documents, extract_entity_names_from_requirements, \
-    _search_by_entity_title, extract_entity_attribute_queries
+from app.semantic_search import extract_key_queries, extract_entity_names_from_requirements, \
+    search_by_entity_title, extract_entity_attribute_queries
 from app.style_utils import has_colored_style
 
 llm = get_llm()
@@ -74,23 +74,23 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
 
     embeddings_model = get_embeddings_model()
 
-    # 1. ИЗВЛЕКАЕМ НАЗВАНИЯ СУЩНОСТЕЙ для точного поиска по title
+    # 1. Извлекаем НАЗВАНИЯ СУЩНОСТЕЙ из требований c целью точного поиска по title (предполагаем title == название сущности)
     entity_names = extract_entity_names_from_requirements(requirements_text)
 
-    # 2. ТОЧНЫЙ ПОИСК ПО НАЗВАНИЯМ СУЩНОСТЕЙ (приоритет #1)
-    exact_match_docs = _search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
+    # 2. Точный поиск документов в хранилище по НАЗВАНИЯМ СУЩНОСТЕЙ (приоритет #1)
+    exact_match_docs = search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
 
-    # 3. ИЗВЛЕКАЕМ КЛЮЧЕВЫЕ ЗАПРОСЫ (включая entity queries)
+    # 3. Извлекаем КЛЮЧЕВЫЕ ЗАПРОСЫ (включая entity queries)
     search_queries = _prepare_search_queries(requirements_text)
     entity_queries = extract_entity_attribute_queries(requirements_text)
-    regular_queries = [q for q in search_queries if q not in entity_queries]
+    regular_queries = [q for q in search_queries if q not in entity_queries] # все запросы, кроме запросов поиска сущностей
 
-    # 4. ДОПОЛНИТЕЛЬНЫЙ ПОИСК МОДЕЛЕЙ ДАННЫХ (если точный поиск не дал результатов)
+    # 4. Дополнительный поиск МОДЕЛЕЙ ДАННЫХ (если точный поиск по наименованиям не дал результатов)
     additional_model_docs = []
-    if len(exact_match_docs) < len(entity_names):  # Не все сущности найдены точно
-        additional_model_docs = _search_data_models(entity_queries, service_code, exclude_page_ids, embeddings_model)
+    # if len(exact_match_docs) < len(entity_names):  # В хранилище нашли не все сущности
+    #     additional_model_docs = _search_data_models(entity_queries, service_code, exclude_page_ids, embeddings_model)
 
-    # 5. ОБЫЧНЫЙ ПОИСК ПО СЕРВИСНЫМ ТРЕБОВАНИЯМ
+    # 5. Обычный поиск по СЕРВИСНЫМ требованиям
     service_filters = _create_filters(service_code, exclude_page_ids)
     service_docs = batch_service_search(
         store_name="service_pages",
@@ -100,7 +100,7 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
         embeddings_model=embeddings_model
     )
 
-    # 6. ПОИСК ПО ПЛАТФОРМЕННЫМ ТРЕБОВАНИЯМ (исключая dataModel)
+    # 6. Поиск по ПЛАТФОРМЕННЫМ требованиям (исключая dataModel)
     try:
         platform_docs = batch_platform_search(
             queries=regular_queries,
@@ -119,7 +119,7 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
     # 7. КОНТЕКСТ ИЗ ССЫЛОК
     linked_docs = _extract_linked_context_optimized(exclude_page_ids) if exclude_page_ids else []
 
-    # 8. ОБЪЕДИНЕНИЕ С МАКСИМАЛЬНЫМ ПРИОРИТЕТОМ ДЛЯ ТОЧНЫХ СОВПАДЕНИЙ
+    # 8. Порядок важен!!! Объединение С МАКСИМАЛЬНЫМ ПРИОРИТЕТОМ ДЛЯ ТОЧНЫХ СОВПАДЕНИЙ начиная с моделей данных
     all_docs = exact_match_docs + additional_model_docs + service_docs + platform_docs
     unique_docs = _fast_deduplicate_documents(all_docs)
 
@@ -148,7 +148,12 @@ def _create_filters(service_code: str, exclude_page_ids: Optional[List[str]]) ->
 
 
 def _prepare_search_queries(requirements_text: str) -> List[str]:
-    """Подготавливает запросы для поиска с кешированием"""
+    """Формирует запросы для поиска путем:
+    1) извлечения специальных запросов для сущностей;
+    2) извлечения обычных ключевых запросов с помощью LLM;
+    3) объединения (приоритет - запросам сущностей).
+    Если ничего не нашли - просто берем первые 10 слов требований.
+    """
     if not requirements_text.strip():
         return [""]  # Пустой запрос для фильтрации
 
@@ -156,10 +161,10 @@ def _prepare_search_queries(requirements_text: str) -> List[str]:
     key_queries = extract_key_queries(requirements_text)
 
     if key_queries:
-        logger.debug("[_prepare_search_queries] Using %d key queries", len(key_queries))
+        logger.debug("[_prepare_search_queries] -> Using %d key queries", len(key_queries))
         return key_queries
 
-    # Fallback: первые 10 слов
+    # Fallback: если ничего не нашли - берем первые 10 слов
     fallback_query = " ".join(requirements_text.split()[:10])
     logger.warning("[_prepare_search_queries] -> Using fallback query: %s", fallback_query)
     return [fallback_query]
@@ -204,7 +209,8 @@ def batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[st
         embeddings_model: Модель эмбеддингов
         exclude_services: Список кодов сервисов для исключения из поиска
     """
-    logger.debug("[batch_platform_search] <- %d queries, exclude pages = {%s}, exclude services = {%s}", len(queries), exclude_page_ids, exclude_services)
+    logger.debug("[batch_platform_search] <- %d queries, queries='%s', exclude pages = {%s}, exclude services = {%s}",
+                 len(queries), queries, exclude_page_ids, exclude_services)
 
     platform_services = get_platform_services()
     if not platform_services:
@@ -826,7 +832,7 @@ def _search_data_models(entity_queries: List[str], service_code: str, exclude_pa
     if not entity_queries:
         return []
 
-    logger.debug("[_search_data_models] Searching with %d entity queries for service: %s",
+    logger.debug("[_search_data_models] <- Searching with %d entity queries for service: %s",
                  len(entity_queries), service_code)
 
     # 1. ПОИСК В ПЛАТФОРМЕННОМ СЕРВИСЕ dataModel (всегда)
@@ -871,9 +877,9 @@ def search_in_service_data_models(entity_queries: List[str], service_code: str, 
         for query in entity_queries:
             try:
                 # equery = re.sub(r'([\[\]])', r'\\\1', query)  # Экранируем квадратные скобки
-                equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
-                logger.debug("[search_in_service_data_models] query: %s", equery)
-                docs = service_store.similarity_search(equery, k=3, filter=filters)
+                # equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
+                logger.debug("[search_in_service_data_models] query: %s", query)
+                docs = service_store.similarity_search(query, k=3, filter=filters)
 
                 # Дополнительно фильтруем по признакам модели данных
                 model_docs = [doc for doc in docs if _is_data_model_page(doc)]
@@ -885,7 +891,7 @@ def search_in_service_data_models(entity_queries: List[str], service_code: str, 
                 logger.warning("[search_in_service_data_models] Error with query '%s': %s",
                                query[:50], str(e))
 
-        logger.debug("[search_in_service_data_models] -> all_docs: %s", all_docs)
+        logger.debug("[search_in_service_data_models] -> all_docs: first 3 items %s", all_docs[:3])
         return all_docs
 
     except Exception as e:
@@ -921,10 +927,12 @@ def search_in_platform_data_models(entity_queries: List[str], exclude_page_ids: 
                 # equery = re.sub(r'([\[\]])', r'\\\1', query) # Экранируем квадратные скобки
                 equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
                 logger.debug("[search_in_platform_data_models] query: %s", equery)
-                docs = platform_store.similarity_search(equery, k=3, filter=filters)
+                # docs = platform_store.similarity_search(equery, k=3, filter=filters)
+                logger.warning("[search_in_platform_data_models] DUMP query == %s", "")
+                docs = platform_store.similarity_search("", k=3, filter=filters)
                 all_docs.extend(docs)
                 logger.debug("[search_in_platform_data_models] Query '%s' found %d docs",
-                             query[:50], len(docs))
+                             equery[:50], len(docs))
             except Exception as e:
                 logger.warning("[search_in_platform_data_models] Error with query '%s': %s",
                                query[:100], str(e))

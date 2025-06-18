@@ -49,9 +49,9 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
             logging.warning("[get_page_content_by_id] No content found for page_id=%s", page_id)
             return None
 
-        # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ
-        content = remove_history_sections(content)
-        logger.debug("[get_page_content_by_id] Removed history sections")
+        # # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ
+        # content = remove_history_sections(content)
+        # logger.debug("[get_page_content_by_id] Removed history sections")
 
         if clean_html:
             logger.debug("[get_page_content_by_id] clean_html started")

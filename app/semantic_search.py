@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)  # Лучше использовать __na
 
 def extract_key_queries(requirements_text: str) -> List[str]:
     """
-    Извлекает ключевые запросы + специальные запросы для сущностей
+    Извлекает ключевые запросы + специальные запросы для сущностей через LLM
     """
     logger.info("[extract_key_queries] <- text length: %d chars", len(requirements_text))
 
@@ -27,10 +27,15 @@ def extract_key_queries(requirements_text: str) -> List[str]:
     # 2. ЗАТЕМ извлекаем обычные ключевые запросы с помощью LLM
     regular_queries = _extract_regular_key_queries_with_llm(requirements_text)
 
-    # 3. Объединяем, приоритет - запросам сущностей
-    all_queries = entity_queries + regular_queries
+    # 3. Объединяем
+    # приоритет - запросам сущностей
+    # all_queries = entity_queries + regular_queries
+    # LLM лучше вычленяет сущности, даже если не соблюдается оформление "Сущность.атрибут",
+    # а по строгим названиям сущностей к этому времени уже поиск произведен.
+    all_queries = regular_queries + entity_queries
 
     # 4. Ограничиваем общее количество (приоритет у entity_queries)
+    logger.info("[extract_key_queries] -> queries: %s", all_queries[:12])
     return all_queries[:12]
 
 
@@ -82,7 +87,9 @@ def _extract_regular_key_queries_with_llm(requirements_text: str) -> List[str]:
 
         queries = queries[:6]  # Ограничиваем для LLM запросов
 
+        logger.debug("[_extract_regular_key_queries_with_llm] extracted LLM queries = {%s}", queries)
         logger.info("[_extract_regular_key_queries_with_llm] -> extracted %d LLM queries", len(queries))
+
         return queries
 
     except Exception as e:
@@ -92,8 +99,8 @@ def _extract_regular_key_queries_with_llm(requirements_text: str) -> List[str]:
 
 def extract_entity_attribute_queries(requirements_text: str) -> List[str]:
     """
-    Извлекает специальные запросы для поиска моделей данных сущностей
-    на основе правил оформления: Сущность.Атрибут
+    Формирует запросы для поиска в хранилище моделей данных сущностей и их атрибутов
+    на основе парсинга из текста "Сущность.Атрибут" (в разных вариациях и ограничителях).
     """
     logger.info("[extract_entity_attribute_queries] <- text length: %d chars", len(requirements_text))
 
@@ -234,7 +241,7 @@ def extract_simple_keywords(text: str) -> List[str]:
     technical_terms = {
         'api', 'json', 'xml', 'rest', 'soap', 'http', 'https',
         'авторизация', 'аутентификация', 'токен', 'jwt',
-        'база данных', 'бд', 'sql', 'таблица',
+        'сущность', 'процесс', 'алгоритм', 'таблица',
         'клиент', 'пользователь', 'продукт', 'услуга',
         'справочник', 'каталог', 'реестр',
         'обработка', 'валидация', 'проверка',
@@ -284,13 +291,13 @@ def deduplicate_documents(docs: List) -> List:
     return unique_docs
 
 
-def _search_by_entity_title(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                            embeddings_model) -> List:
+def search_by_entity_title(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
+                           embeddings_model) -> List:
     """
-    Поиск страниц с точным совпадением title с именем сущности
-    Это самый точный способ найти модель данных сущности
+    Поиск в хранилищах (платформенном и сервисном) страниц с точным совпадением title с именем сущности.
+    Это самый точный способ найти модель данных сущности.
     """
-    logger.debug("[_search_by_entity_title] <- Searching by exact title match for entities: %s", entity_names)
+    logger.debug("[search_by_entity_title] <- Searching by exact title match for entities: %s", entity_names)
 
     if not entity_names:
         return []
@@ -298,21 +305,21 @@ def _search_by_entity_title(entity_names: List[str], service_code: str, exclude_
     found_docs = []
 
     # 1. ПОИСК В ПЛАТФОРМЕННОМ dataModel
-    platform_docs = _search_by_title_in_platform(entity_names, exclude_page_ids, embeddings_model)
+    platform_docs = search_by_title_in_platform(entity_names, exclude_page_ids, embeddings_model)
     found_docs.extend(platform_docs)
 
     # 2. ПОИСК В СЕРВИСНОМ ХРАНИЛИЩЕ
-    service_docs = _search_by_title_in_service(entity_names, service_code, exclude_page_ids, embeddings_model)
+    service_docs = search_by_title_in_service(entity_names, service_code, exclude_page_ids, embeddings_model)
     found_docs.extend(service_docs)
 
-    logger.info("[_search_by_entity_title] -> Found %d documents by exact title match", len(found_docs))
+    logger.info("[search_by_entity_title] -> Found %d documents by exact title match", len(found_docs))
     return found_docs
 
 
-def _search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Optional[List[str]],
-                                 embeddings_model) -> List:
+def search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Optional[List[str]],
+                                embeddings_model) -> List:
     """Поиск по всем title в платформенном dataModel сервисе"""
-    logger.debug("[_search_by_title_in_platform] <- Searching by title match for entities: %s", entity_names)
+    logger.debug("[search_by_title_in_platform] <- Searching by title for entities: %s", entity_names)
 
     if not entity_names:
         return []
@@ -327,7 +334,7 @@ def _search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Opti
             return []
 
         # Ищем сразу по всем сущностям одним запросом
-        # ✅ ИСПРАВЛЕНИЕ: Строим один оптимальный фильтр
+        # Строим один оптимальный фильтр
         filters = {
             "$and": [
                 {"service_code": {"$eq": "dataModel"}},
@@ -339,7 +346,7 @@ def _search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Opti
         if exclude_page_ids:
             filters["$and"].append({"page_id": {"$nin": exclude_page_ids}})
 
-        logger.debug("[_search_by_title_in_platform] Optimized filter: %s", filters)
+        logger.debug("[search_by_title_in_platform] Optimized filter: %s", filters)
 
         # Один запрос для всех сущностей
         docs = platform_store.similarity_search(
@@ -348,23 +355,25 @@ def _search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Opti
             filter=filters
         )
 
-        logger.debug("[_search_by_title_in_platform] Found %d docs for entities: %s",
+        logger.debug("[search_by_title_in_platform] Found %d docs for entities: %s",
                      len(docs), cleaned_entity_names)
 
         # Логируем какие именно сущности найдены
         found_titles = set(doc.metadata.get('title', '') for doc in docs)
-        logger.info("[_search_by_title_in_platform] -> Found documents for entities: %s", sorted(found_titles))
+        logger.info("[search_by_title_in_platform] -> Found documents for entities: %s", sorted(found_titles))
 
         return docs
 
     except Exception as e:
-        logger.error("[_search_by_title_in_platform] Error: %s", str(e))
+        logger.error("[search_by_title_in_platform] Error: %s", str(e))
         return []
 
 
-def _search_by_title_in_service(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                                embeddings_model) -> List:
+def search_by_title_in_service(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
+                               embeddings_model) -> List:
     """Поиск по всем title в сервисном хранилище"""
+    logger.debug("[search_by_title_in_service] <- Searching by title for entities: %s", entity_names)
+
     if not entity_names:
         return []
 
@@ -378,7 +387,7 @@ def _search_by_title_in_service(entity_names: List[str], service_code: str, excl
             return []
 
         # ИСПРАВЛЕНО: Ищем сразу по всем сущностям одним запросом
-        # ✅ ИСПРАВЛЕНИЕ: Строим один оптимальный фильтр
+        # Строим один оптимальный фильтр
         base_filter = {
             "$and": [
                 {"service_code": {"$eq": "dataModel"}},
@@ -418,6 +427,7 @@ def extract_entity_names_from_requirements(requirements_text: str) -> List[str]:
     """
     Извлекает названия сущностей из текста требований для точного поиска по title
     """
+    logger.debug("[extract_entity_names_from_requirements] <- %s" % requirements_text)
     entity_names = []
 
     # Используем новый подход с цепочками
