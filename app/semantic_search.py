@@ -319,7 +319,7 @@ def search_by_entity_title(entity_names: List[str], service_code: str, exclude_p
 def search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Optional[List[str]],
                                 embeddings_model) -> List:
     """Поиск по всем title в платформенном dataModel сервисе"""
-    logger.debug("[search_by_title_in_platform] <- Searching by title for entities: %s", entity_names)
+    logger.debug("[search_by_title_in_platform] <- Search by title for entities: %s", entity_names)
 
     if not entity_names:
         return []
@@ -346,7 +346,7 @@ def search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Optio
         if exclude_page_ids:
             filters["$and"].append({"page_id": {"$nin": exclude_page_ids}})
 
-        logger.debug("[search_by_title_in_platform] Optimized filter: %s", filters)
+        logger.debug("[search_by_title_in_platform] Searching optimized filter = %s, query = ''", filters)
 
         # Один запрос для всех сущностей
         docs = platform_store.similarity_search(
@@ -372,7 +372,8 @@ def search_by_title_in_platform(entity_names: List[str], exclude_page_ids: Optio
 def search_by_title_in_service(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
                                embeddings_model) -> List:
     """Поиск по всем title в сервисном хранилище"""
-    logger.debug("[search_by_title_in_service] <- Searching by title for entities: %s", entity_names)
+    logger.debug("[search_by_title_in_service] <- Search by title for entities %s, service code = %s",
+                 entity_names, service_code)
 
     if not entity_names:
         return []
@@ -399,7 +400,7 @@ def search_by_title_in_service(entity_names: List[str], service_code: str, exclu
         if exclude_page_ids:
             base_filter["$and"].append({"page_id": {"$nin": exclude_page_ids}})
 
-        logger.debug("[_search_by_title_in_platform] Optimized filter: %s", base_filter)
+        logger.debug("[search_by_title_in_service] Searching optimized filter = %s, query = ''", base_filter)
 
         # Один запрос для всех сущностей
         docs = service_store.similarity_search(
@@ -408,18 +409,18 @@ def search_by_title_in_service(entity_names: List[str], service_code: str, exclu
             filter=base_filter
         )
 
-        logger.debug("[_search_by_title_in_service] Found %d docs for entities: %s in service %s",
+        logger.debug("[search_by_title_in_service] Found %d docs for entities %s",
                      len(docs), cleaned_entity_names, service_code)
 
         # Логируем какие именно сущности найдены
         found_titles = set(doc.metadata.get('title', '') for doc in docs)
-        logger.info("[_search_by_title_in_service] -> Found documents for entities: %s in service %s",
+        logger.info("[search_by_title_in_service] -> Found documents for entities %s in service %s",
                     sorted(found_titles), service_code)
 
         return docs
 
     except Exception as e:
-        logger.error("[_search_by_title_in_service] Error: %s", str(e))
+        logger.error("[search_by_title_in_service] Error: %s", str(e))
         return []
 
 

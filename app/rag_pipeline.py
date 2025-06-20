@@ -10,7 +10,7 @@ import tiktoken
 from bs4 import BeautifulSoup
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
-from app.config import LLM_PROVIDER
+from app.config import LLM_PROVIDER, TEMPLATE_ANALYSIS_PROMPT_FILE, PAGE_ANALYSIS_PROMPT_FILE
 from app.embedding_store import get_vectorstore
 from app.confluence_loader import get_page_content_by_id, extract_approved_fragments
 from app.llm_interface import get_llm, get_embeddings_model
@@ -23,6 +23,7 @@ from app.template_registry import get_template_by_type
 from app.semantic_search import extract_key_queries, extract_entity_names_from_requirements, \
     search_by_entity_title, extract_entity_attribute_queries
 from app.style_utils import has_colored_style
+import time
 
 llm = get_llm()
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
         prompt = PromptTemplate(input_variables=["requirement", "context"], template=prompt_template)
     else:
         try:
-            with open("page_prompt_template.txt", "r", encoding="utf-8") as file:
+            with open(PAGE_ANALYSIS_PROMPT_FILE, "r", encoding="utf-8") as file:
                 template = file.read().strip()
             if not template:
                 template = "Проанализируй требования: {requirement}\nКонтекст: {context}\nПредоставь детальный анализ."
@@ -46,10 +47,10 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
                 template=template
             )
         except FileNotFoundError:
-            logger.error("[build_chain] Файл page_prompt_template.txt не найден")
+            logger.error("[build_chain] Файл %s не найден", PAGE_ANALYSIS_PROMPT_FILE)
             raise
         except Exception as e:
-            logger.error("[build_chain] Ошибка чтения page_prompt_template.txt: %s", str(e))
+            logger.error("[build_chain] Ошибка чтения %s: %s", PAGE_ANALYSIS_PROMPT_FILE, str(e))
             raise
 
     logger.info("[build_chain] -> prompt template: %s", prompt.template)
@@ -180,17 +181,17 @@ def batch_service_search(store_name: str, queries: List[str], filters: dict,
     all_docs = []
 
     # ДОБАВИТЬ ЛОГИРОВАНИЕ ФИЛЬТРОВ ДЛЯ СРАВНЕНИЯ
-    logger.debug("[batch_service_search] Store: %s, Filter: %s", store_name, filters)
+    logger.debug("[batch_service_search] Store: %s, Filters: %s", store_name, filters)
 
     for query in queries:
         try:
+            logger.debug("[batch_service_search] Searching query = '%s'", query)
             docs = store.similarity_search(query, k=k_per_query, filter=filters)
             all_docs.extend(docs)
-            logger.debug("[batch_service_search] Store: %s, Query '%s' found %d docs",
+            logger.debug("[batch_service_search] query '%s' found %d docs",
                         store_name, query[:50], len(docs))
         except Exception as e:
-            logger.error("[batch_service_search] Store: %s, Error searching '%s': %s",
-                        store_name, query[:50], str(e))
+            logger.error("[batch_service_search] Error searching '%s'",query[:50], str(e))
 
     logger.debug("[batch_service_search] -> %d docs", len(all_docs))
 
@@ -262,13 +263,14 @@ def batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[st
 
     for query in queries:
         try:
-            logger.debug("[batch_platform_search] Searching query: '%s'", query[:100])
+            filters = {"service_code": {"$in": platform_codes}} # Используем отфильтрованный список
+            logger.debug("[batch_platform_search] Searching query = '%s', filters = '%s'", query[:100]+"...", filters)
 
             # ИСПРАВЛЕНИЕ: Ищем с простым фильтром, исключаем вручную
             docs = platform_store.similarity_search(
                 query,
                 k=(k_per_query * len(platform_services)) + len(exclude_set),
-                filter={"service_code": {"$in": platform_codes}}  # Используем отфильтрованный список
+                filter=filters
             )
 
             # Фильтруем исключения вручную
@@ -651,7 +653,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
         max_tokens = 65000
         max_context_tokens = max_tokens // 2
         current_tokens = 0
-        template = prompt_template or open("page_prompt_template.txt", "r", encoding="utf-8").read().strip()
+        template = prompt_template or open(PAGE_ANALYSIS_PROMPT_FILE, "r", encoding="utf-8").read().strip()
         template_tokens = count_tokens(template)
 
         # Собираем страницы до превышения лимита токенов
@@ -757,66 +759,175 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
 
 def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = None,
                            service_code: Optional[str] = None):
+    """
+    Анализирует новые требования и их соответствие шаблонам с передачей шаблона в LLM.
+    """
+    logger.info("[analyze_with_templates] <- items count: %d, service_code: %s", len(items), service_code)
+
     if not service_code:
         page_ids = [item["page_id"] for item in items]
         service_code = resolve_service_code_from_pages_or_user(page_ids)
         logger.info("[analyze_with_templates] Resolved service_code: %s", service_code)
 
     results = []
+
+    # Создаем цепочку для анализа шаблонов
+    template_chain = build_template_analysis_chain(prompt_template)
+
     for item in items:
         requirement_type = item["requirement_type"]
         page_id = item["page_id"]
 
+        logger.info("[analyze_with_templates] Processing page_id: %s, type: %s", page_id, requirement_type)
+
+        # Получаем контент страницы и шаблон
         content = get_page_content_by_id(page_id, clean_html=True)
-        template = get_template_by_type(requirement_type)
-        if not content or not template:
+        template_html = get_template_by_type(requirement_type)
+
+        if not content or not template_html:
+            logger.warning("[analyze_with_templates] Missing content or template for page %s", page_id)
             results.append({
                 "page_id": page_id,
                 "requirement_type": requirement_type,
-                "analysis": "Ошибка: отсутствует содержимое страницы или шаблон",
-                "formatting_issues": []
+                "template_analysis": {
+                    "error": "Отсутствует содержимое страницы или шаблон",
+                    "template_available": bool(template_html),
+                    "content_available": bool(content)
+                },
+                "legacy_formatting_issues": []
             })
             continue
 
-        template_md = markdownify(template, heading_style="ATX")
+        # Конвертируем шаблон в читаемый формат
+        # TODO похоже лишнее, так как шаблон очистили при сохранении.
+        # template_content = extract_approved_fragments(template_html)
+        template_content = template_html
+
+        if not template_content or not template_content.strip():
+            logger.warning("[analyze_with_templates] Empty template content for type: %s", requirement_type)
+            template_content = template_html  # Используем исходный HTML как fallback
+
+        # Строим контекст (исключаем анализируемую страницу)
+        context = build_context(
+            service_code=service_code,
+            requirements_text=content,  # Передаем текст для семантического поиска
+            exclude_page_ids=[page_id]
+        )
+
+        # Быстрая структурная проверка (legacy поддержка)
+        legacy_formatting_issues = _perform_legacy_structure_check(template_html, content)
+
+        try:
+            # Анализ через LLM с передачей шаблона
+            logger.debug(
+                "[analyze_with_templates] Sending to LLM: template length=%d, content length=%d, context length=%d",
+                len(template_content), len(content), len(context))
+
+            llm_result = template_chain.run({
+                "requirement": content,
+                "template": template_content,
+                "context": context
+            })
+
+            # Парсим JSON ответ от LLM
+            try:
+                template_analysis = _parse_llm_template_response(llm_result)
+                logger.info("[analyze_with_templates] LLM analysis completed for page %s", page_id)
+            except Exception as json_error:
+                logger.error("[analyze_with_templates] Failed to parse LLM JSON for page %s: %s", page_id,
+                             str(json_error))
+                template_analysis = {
+                    "error": "Не удалось разобрать ответ LLM",
+                    "raw_response": llm_result[:500],  # Первые 500 символов для отладки
+                    "parse_error": str(json_error)
+                }
+
+            results.append({
+                "page_id": page_id,
+                "requirement_type": requirement_type,
+                "template_analysis": template_analysis,
+                "legacy_formatting_issues": legacy_formatting_issues,
+                "template_used": requirement_type,
+                "analysis_timestamp": time.time()
+            })
+
+        except Exception as e:
+            logger.error("[analyze_with_templates] Error analyzing page %s: %s", page_id, str(e))
+
+            if "token limit" in str(e).lower():
+                error_msg = "Превышен лимит токенов модели"
+            else:
+                error_msg = f"Ошибка анализа: {str(e)}"
+
+            results.append({
+                "page_id": page_id,
+                "requirement_type": requirement_type,
+                "template_analysis": {
+                    "error": error_msg,
+                    "error_type": "llm_error"
+                },
+                "legacy_formatting_issues": legacy_formatting_issues
+            })
+
+    logger.info("[analyze_with_templates] -> Completed analysis for %d items", len(results))
+    return results
+
+
+def _perform_legacy_structure_check(template_html: str, content: str) -> List[str]:
+    """Выполняет быструю структурную проверку (legacy код для обратной совместимости)"""
+    try:
+        from markdownify import markdownify
+        from bs4 import BeautifulSoup
+
+        template_md = markdownify(template_html, heading_style="ATX")
         content_md = markdownify(content, heading_style="ATX")
         template_soup = BeautifulSoup(template_md, 'html.parser')
         content_soup = BeautifulSoup(content_md, 'html.parser')
 
         formatting_issues = []
+
+        # Проверка заголовков
         template_headers = [h.get_text().strip() for h in template_soup.find_all(['h1', 'h2', 'h3'])]
         content_headers = [h.get_text().strip() for h in content_soup.find_all(['h1', 'h2', 'h3'])]
         if set(template_headers) != set(content_headers):
             formatting_issues.append(
                 f"Несоответствие заголовков: ожидаются {template_headers}, найдены {content_headers}")
 
+        # Проверка таблиц
         template_tables = template_soup.find_all('table')
         content_tables = content_soup.find_all('table')
         if len(template_tables) != len(content_tables):
             formatting_issues.append(
                 f"Несоответствие количества таблиц: ожидается {len(template_tables)}, найдено {len(content_tables)}")
 
-        chain = build_chain(prompt_template)
-        context = build_context(service_code, exclude_page_ids=[page_id])
-        try:
-            result = chain.run({"requirement": content, "context": context})
-            results.append({
-                "page_id": page_id,
-                "requirement_type": requirement_type,
-                "analysis": result,
-                "formatting_issues": formatting_issues
-            })
-        except Exception as e:
-            if "token limit" in str(e).lower():
-                results.append({
-                    "page_id": page_id,
-                    "requirement_type": requirement_type,
-                    "analysis": "Ошибка: превышен лимит токенов модели",
-                    "formatting_issues": formatting_issues
-                })
-            else:
-                raise
-    return results
+        return formatting_issues
+
+    except Exception as e:
+        logger.warning("[_perform_legacy_structure_check] Error in legacy check: %s", str(e))
+        return [f"Ошибка структурной проверки: {str(e)}"]
+
+
+def _parse_llm_template_response(llm_response: str) -> dict:
+    """Парсит JSON ответ от LLM"""
+    # Используем существующую функцию извлечения JSON
+    json_content = _extract_json_from_llm_response(llm_response)
+
+    if not json_content:
+        raise ValueError("No valid JSON found in LLM response")
+
+    parsed_result = json.loads(json_content)
+
+    # Валидируем структуру ответа
+    required_sections = ["template_compliance", "content_quality", "system_integration", "recommendations", "summary"]
+    missing_sections = [section for section in required_sections if section not in parsed_result]
+
+    if missing_sections:
+        logger.warning("[_parse_llm_template_response] Missing sections in LLM response: %s", missing_sections)
+        # Добавляем недостающие секции с значениями по умолчанию
+        for section in missing_sections:
+            parsed_result[section] = {"error": f"Section {section} missing from LLM response"}
+
+    return parsed_result
 
 def _search_data_models(entity_queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
                         embeddings_model) -> List:
@@ -961,3 +1072,44 @@ def _is_data_model_page(doc) -> bool:
         return True
 
     return False
+
+
+def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMChain:
+    """Создает цепочку LangChain для анализа соответствия шаблону."""
+    logger.info("[build_template_analysis_chain] <- custom_prompt provided: %s", bool(custom_prompt))
+
+    if custom_prompt:
+        # Проверяем, что промпт содержит необходимые переменные
+        required_vars = ["{requirement}", "{template}", "{context}"]
+        if not all(var in custom_prompt for var in required_vars):
+            raise ValueError(f"Custom prompt template must include {required_vars}")
+        template = custom_prompt
+    else:
+        try:
+            with open(TEMPLATE_ANALYSIS_PROMPT_FILE, "r", encoding="utf-8") as file:
+                template = file.read().strip()
+            if not template:
+                raise ValueError("Template analysis prompt file is empty")
+        except FileNotFoundError:
+            logger.error("[build_template_analysis_chain] Файл %s не найден",TEMPLATE_ANALYSIS_PROMPT_FILE)
+            # Fallback промпт
+            template = """
+Проанализируй соответствие требований шаблону:
+
+ШАБЛОН: {template}
+ТРЕБОВАНИЯ: {requirement}
+КОНТЕКСТ: {context}
+
+Верни анализ в формате JSON с оценками соответствия, качества и рекомендациями.
+"""
+        except Exception as e:
+            logger.error("[build_template_analysis_chain] Ошибка чтения %s: %s", TEMPLATE_ANALYSIS_PROMPT_FILE, str(e))
+            raise
+
+    prompt = PromptTemplate(
+        input_variables=["requirement", "template", "context"],
+        template=template
+    )
+
+    logger.info("[build_template_analysis_chain] -> Template analysis chain created")
+    return LLMChain(llm=llm, prompt=prompt)

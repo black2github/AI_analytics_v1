@@ -65,7 +65,7 @@ def prepare_documents_for_approved_content(
         if service_code:
             metadata["service_code"] = service_code
         if enrich_with_type and "title" in page:
-            metadata["requirement_type"] = page["title"].replace("Template: ", "").strip()
+            metadata["requirement_type"] = page["title"].replace("[DRAFT] ", "").strip()
 
         logger.debug("[prepare_documents_for_approved_content] creating doc: page_id=%s, title='%s', source='%s', type='%s', service_code='%s' ",
                      page["id"], page["title"], source, doc_type, service_code)

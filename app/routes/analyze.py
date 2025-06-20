@@ -84,6 +84,15 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
 
 @router.post("/analyze_with_templates", tags=["Анализ новых требований сервиса и их оформления"])
 async def analyze_with_templates_route(payload: AnalyzeWithTemplatesRequest):
+    """
+    Анализирует новые требования на соответствие шаблонам с передачей шаблона в LLM.
+
+    Возвращает детальный анализ включая:
+    - Соответствие структуре шаблона
+    - Качество содержимого
+    - Совместимость с системой
+    - Конкретные рекомендации по улучшению
+    """
     logger.info("[analyze_with_templates] <- payload=%s", payload)
     try:
         result = analyze_with_templates(
@@ -91,7 +100,7 @@ async def analyze_with_templates_route(payload: AnalyzeWithTemplatesRequest):
             prompt_template=payload.prompt_template,
             service_code=payload.service_code
         )
-        logger.info("[analyze_with_templates] -> result={%s}", result)
+        logger.info("[analyze_with_templates] -> result count=%d", len(result))
         return {"results": result}
     except Exception as e:
         logging.exception("Ошибка в /analyze_with_templates")

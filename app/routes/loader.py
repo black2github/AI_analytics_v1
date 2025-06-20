@@ -31,7 +31,7 @@ class RemovePagesRequest(BaseModel):
 @router.post("/load_pages", tags=["Загрузка Confluence страниц требований"])
 async def load_service_pages(payload: LoadRequest):
     """
-    ИСПРАВЛЕНО: Загружает ТОЛЬКО подтвержденные требования в векторное хранилище.
+    Загружает ТОЛЬКО подтвержденные требования в векторное хранилище.
     Согласно постановке задачи, в хранилище должны быть только подтвержденные требования.
     """
     logger.info("[load_service_pages] <- page_ids={%s}, service_code={%s}", payload.page_ids, payload.service_code)

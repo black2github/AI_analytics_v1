@@ -27,4 +27,5 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM
 
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma")
 
-# DEFAULT_PROMPT_TEMPLATE = os.getenv("DEFAULT_PROMPT_TEMPLATE")
+PAGE_ANALYSIS_PROMPT_FILE = os.getenv("PAGE_ANALYSIS_PROMPT_FILE", "page_prompt_template.txt")
+TEMPLATE_ANALYSIS_PROMPT_FILE = os.getenv("TEMPLATE_ANALYSIS_PROMPT_FILE", "template-analysis-prompt.txt")
