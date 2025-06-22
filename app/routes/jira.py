@@ -3,7 +3,7 @@
 Маршруты для работы с Jira API.
 """
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.jira_loader import extract_confluence_page_ids_from_jira_tasks
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PageAnalysisResult(BaseModel):
     """Модель результата анализа одной страницы."""
     page_id: str
-    analysis: Dict[str, Any]  # Сложная структура анализа с разделами и критериями
+    analysis: Union[str, Dict[str, Any]]  # Сложная структура анализа с разделами и критериями
 
 
 class JiraTaskRequest(BaseModel):
