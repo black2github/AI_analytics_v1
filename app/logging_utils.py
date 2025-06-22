@@ -22,7 +22,7 @@ def set_log_level(level_name: str):
     for handler in logger.handlers:
         handler.setLevel(level)
 
-        # ✅ ИСПРАВЛЕНИЕ: Обновляем фильтр правильно
+        #  ИСПРАВЛЕНИЕ: Обновляем фильтр правильно
         for filter_obj in handler.filters:
             if hasattr(filter_obj, 'logger_level'):
                 old_level = logging.getLevelName(filter_obj.logger_level)
@@ -45,7 +45,7 @@ def log_sample_messages():
     logger = logging.getLogger(__name__)
 
     # Генерируем длинное сообщение для тестирования обрезки
-    long_message = "A" * 1200  # 1200 символов
+    long_message = "Отладочное сообщение для тестирования обрезки 123 " * 24  #  1200 символов
 
     logger.debug("DEBUG: Это отладочное сообщение (должно быть скрыто)")
     logger.info(f"INFO: Короткое информационное сообщение")
