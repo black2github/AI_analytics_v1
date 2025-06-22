@@ -4,13 +4,11 @@ import logging
 import json
 import re
 from typing import Optional, List
-import markdownify
-from markdownify import markdownify
 import tiktoken
 from bs4 import BeautifulSoup
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
-from app.config import LLM_PROVIDER, TEMPLATE_ANALYSIS_PROMPT_FILE, PAGE_ANALYSIS_PROMPT_FILE
+from app.config import LLM_PROVIDER, TEMPLATE_ANALYSIS_PROMPT_FILE, PAGE_ANALYSIS_PROMPT_FILE, UNIFIED_STORAGE_NAME
 from app.embedding_store import get_vectorstore
 from app.confluence_loader import get_page_content_by_id, extract_approved_fragments
 from app.llm_interface import get_llm, get_embeddings_model
@@ -20,8 +18,12 @@ from app.service_registry import (
     resolve_service_code_by_user
 )
 from app.template_registry import get_template_by_type
-from app.semantic_search import extract_key_queries, extract_entity_names_from_requirements, \
-    search_by_entity_title, extract_entity_attribute_queries
+from app.semantic_search import (
+    extract_key_queries,
+    extract_entity_names_from_requirements,
+    extract_entity_attribute_queries,
+    unified_search_by_entity_title  # ОБНОВЛЕННЫЙ ИМПОРТ
+)
 from app.style_utils import has_colored_style
 import time
 
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def build_chain(prompt_template: Optional[str]) -> LLMChain:
     """Создает цепочку LangChain с заданным шаблоном промпта."""
-    logger.info("[build_chain] <- prompt_template={%s}", prompt_template)
+    logger.info("[build_chain] <- prompt_template=%s", bool(prompt_template))
     if prompt_template:
         if not all(var in prompt_template for var in ["{requirement}", "{context}"]):
             raise ValueError("Prompt template must include {requirement} and {context}")
@@ -53,17 +55,16 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
             logger.error("[build_chain] Ошибка чтения %s: %s", PAGE_ANALYSIS_PROMPT_FILE, str(e))
             raise
 
-    logger.info("[build_chain] -> prompt template: %s", prompt.template)
-    logger.info("[build_chain] -> prompt input variables: %s", prompt.input_variables)
-
+    logger.info("[build_chain] -> prompt template created successfully")
     return LLMChain(llm=llm, prompt=prompt)
 
 
 def build_context(service_code: str, requirements_text: str = "", exclude_page_ids: Optional[List[str]] = None):
     """
-    Оптимизированная версия формирования контекста с улучшенной производительностью.
-    УЛУЧШЕННАЯ версия с точным поиском моделей данных.
-        Args:
+    Формирование контекста с использованием единого хранилища.
+    Упрощенная версия с объединенным поиском.
+
+    Args:
         service_code: Код сервиса
         requirements_text: Текст анализируемых требований для семантического поиска
         exclude_page_ids: Список ID страниц, исключаемых из контекста
@@ -71,92 +72,173 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
     Returns:
         Строковый контекст, объединяющий содержимое документов
     """
-    logger.info("[build_context] <- service_code=%s, requirements_length=%d", service_code, len(requirements_text))
+    logger.info("[build_context] <- service_code=%s, requirements_length=%d, exclude_pages=%d",
+                service_code, len(requirements_text), len(exclude_page_ids or []))
 
     embeddings_model = get_embeddings_model()
 
-    # 1. Извлекаем НАЗВАНИЯ СУЩНОСТЕЙ из требований c целью точного поиска по title (предполагаем title == название сущности)
+    # 1. Извлекаем названия сущностей для точного поиска по title
     entity_names = extract_entity_names_from_requirements(requirements_text)
 
-    # 2. Точный поиск документов в хранилище по НАЗВАНИЯМ СУЩНОСТЕЙ (приоритет #1)
-    exact_match_docs = search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
+    # 2. Точный поиск документов по названиям сущностей (приоритет #1)
+    exact_match_docs = unified_search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
 
-    # 3. Извлекаем КЛЮЧЕВЫЕ ЗАПРОСЫ (включая entity queries)
+    # 3. Извлекаем ключевые запросы
     search_queries = _prepare_search_queries(requirements_text)
     entity_queries = extract_entity_attribute_queries(requirements_text)
-    regular_queries = [q for q in search_queries if q not in entity_queries] # все запросы, кроме запросов поиска сущностей
+    regular_queries = [q for q in search_queries if q not in entity_queries]
 
-    # 4. Дополнительный поиск МОДЕЛЕЙ ДАННЫХ (если точный поиск по наименованиям не дал результатов)
-    additional_model_docs = []
-    # if len(exact_match_docs) < len(entity_names):  # В хранилище нашли не все сущности
-    #     additional_model_docs = _search_data_models(entity_queries, service_code, exclude_page_ids, embeddings_model)
-
-    # 5. Обычный поиск по СЕРВИСНЫМ требованиям
-    service_filters = _create_filters(service_code, exclude_page_ids)
-    service_docs = batch_service_search(
-        store_name="service_pages",
+    # 4. Поиск по требованиям текущего сервиса
+    service_docs = unified_service_search(
         queries=regular_queries,
-        filters=service_filters,
+        service_code=service_code,
+        exclude_page_ids=exclude_page_ids,
         k_per_query=3,
         embeddings_model=embeddings_model
     )
 
-    # 6. Поиск по ПЛАТФОРМЕННЫМ требованиям (исключая dataModel)
-    try:
-        platform_docs = batch_platform_search(
-            queries=regular_queries,
-            exclude_page_ids=exclude_page_ids,
-            k_per_query=2,
-            embeddings_model=embeddings_model,
-            exclude_services=["dataModel"]  # Исключаем, так как искали модель данных ранее на шаге 2
-        )
+    # 5. Поиск по платформенным требованиям
+    platform_docs = unified_platform_search(
+        queries=regular_queries,
+        exclude_page_ids=exclude_page_ids,
+        k_per_query=2,
+        embeddings_model=embeddings_model,
+        exclude_services=["dataModel"]  # Исключаем dataModel, так как искали точно на шаге 2
+    )
 
-        logger.debug("[build_context] Filtered out dataModel, remaining platform docs: %d", len(platform_docs))
-
-    except Exception as e:
-        logger.error("[build_context] Platform search failed: %s", str(e))
-        platform_docs = []
-
-    # 7. КОНТЕКСТ ИЗ ССЫЛОК
+    # 6. Контекст из ссылок
     linked_docs = _extract_linked_context_optimized(exclude_page_ids) if exclude_page_ids else []
 
-    # 8. Порядок важен!!! Объединение С МАКСИМАЛЬНЫМ ПРИОРИТЕТОМ ДЛЯ ТОЧНЫХ СОВПАДЕНИЙ начиная с моделей данных
-    all_docs = exact_match_docs + additional_model_docs + service_docs + platform_docs
+    # 7. Объединяем все документы (приоритет у точных совпадений)
+    all_docs = exact_match_docs + service_docs + platform_docs
     unique_docs = _fast_deduplicate_documents(all_docs)
 
-    # 9. ФОРМИРОВАНИЕ КОНТЕКСТА
+    # 8. Формируем контекст
     context_parts = [d.page_content for d in unique_docs] + linked_docs
     context = "\n\n".join(context_parts)
     context = _smart_truncate_context(context, max_length=16000)
 
-    logger.info("[build_context] -> exact_matches=%d, additional_models=%d, service=%d, platform=%d, linked=%d",
-                len(exact_match_docs), len(additional_model_docs), len(service_docs),
-                len(platform_docs), len(linked_docs))
+    logger.info("[build_context] -> exact_matches=%d, service=%d, platform=%d, linked=%d",
+                len(exact_match_docs), len(service_docs), len(platform_docs), len(linked_docs))
 
     return context
 
 
-def _create_filters(service_code: str, exclude_page_ids: Optional[List[str]]) -> dict:
-    """Создает фильтры один раз"""
+def unified_service_search(queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
+                           k_per_query: int, embeddings_model) -> List:
+    """
+    Поиск требований конкретного сервиса в едином хранилище.
+    """
+    logger.debug("[unified_service_search] <- %d queries for service_code='%s'", len(queries), service_code)
+
+    store = get_vectorstore(UNIFIED_STORAGE_NAME, embedding_model=embeddings_model)
+    all_docs = []
+
+    # Создаем базовый фильтр для конкретного сервиса
+    base_filter = {
+        "$and": [
+            {"doc_type": {"$eq": "requirement"}},
+            {"service_code": {"$eq": service_code}}
+        ]
+    }
+
+    # Добавляем исключение страниц если нужно
     if exclude_page_ids:
-        return {
-            "$and": [
-                {"service_code": {"$eq": service_code}},
-                {"page_id": {"$nin": exclude_page_ids}}
-            ]
-        }
-    return {"service_code": {"$eq": service_code}}
+        base_filter["$and"].append({"page_id": {"$nin": exclude_page_ids}})
+
+    logger.debug("[unified_service_search] Using filter: %s", base_filter)
+
+    for query in queries:
+        try:
+            docs = store.similarity_search(query, k=k_per_query, filter=base_filter)
+            all_docs.extend(docs)
+            logger.debug("[unified_service_search] Query '%s' found %d docs for service %s",
+                         query[:50], len(docs), service_code)
+        except Exception as e:
+            logger.error("[unified_service_search] Error searching '%s': %s", query[:50], str(e))
+
+    logger.debug("[unified_service_search] -> %d total docs found", len(all_docs))
+    return all_docs
+
+
+def unified_platform_search(queries: List[str], exclude_page_ids: Optional[List[str]],
+                            k_per_query: int, embeddings_model, exclude_services: Optional[List[str]] = None) -> List:
+    """
+    Поиск платформенных требований в едином хранилище.
+    """
+    logger.debug("[unified_platform_search] <- %d queries, exclude_services=%s", len(queries), exclude_services)
+
+    store = get_vectorstore(UNIFIED_STORAGE_NAME, embedding_model=embeddings_model)
+    all_docs = []
+
+    # Получаем список платформенных сервисов
+    platform_services = get_platform_services()
+    if not platform_services:
+        logger.warning("[unified_platform_search] No platform services found")
+        return []
+
+    # Исключаем сервисы если нужно
+    platform_codes = [svc["code"] for svc in platform_services]
+    if exclude_services:
+        platform_codes = [code for code in platform_codes if code not in exclude_services]
+        logger.debug("[unified_platform_search] Excluded services: %s", exclude_services)
+
+    if not platform_codes:
+        logger.warning("[unified_platform_search] No platform services left after exclusions")
+        return []
+
+    # Создаем фильтр для платформенных требований
+    base_filter = {
+        "$and": [
+            {"doc_type": {"$eq": "requirement"}},
+            {"is_platform": {"$eq": True}},
+            {"service_code": {"$in": platform_codes}}
+        ]
+    }
+
+    # Добавляем исключение страниц если нужно
+    if exclude_page_ids:
+        base_filter["$and"].append({"page_id": {"$nin": exclude_page_ids}})
+
+    logger.debug("[unified_platform_search] Using filter: %s", base_filter)
+
+    for query in queries:
+        try:
+            docs = store.similarity_search(query, k=k_per_query * len(platform_codes), filter=base_filter)
+
+            # Ограничиваем результат
+            docs = docs[:k_per_query * len(platform_codes)]
+            all_docs.extend(docs)
+
+            logger.debug("[unified_platform_search] Query '%s' found %d platform docs", query[:50], len(docs))
+        except Exception as e:
+            logger.error("[unified_platform_search] Error searching '%s': %s", query[:50], str(e))
+
+            # Fallback: поиск без фильтра по service_code
+            try:
+                fallback_filter = {
+                    "$and": [
+                        {"doc_type": {"$eq": "requirement"}},
+                        {"is_platform": {"$eq": True}}
+                    ]
+                }
+                if exclude_page_ids:
+                    fallback_filter["$and"].append({"page_id": {"$nin": exclude_page_ids}})
+
+                docs = store.similarity_search(query, k=k_per_query, filter=fallback_filter)
+                all_docs.extend(docs)
+                logger.debug("[unified_platform_search] Fallback found %d docs", len(docs))
+            except Exception as e2:
+                logger.error("[unified_platform_search] Fallback also failed: %s", str(e2))
+
+    logger.info("[unified_platform_search] -> %d platform docs found", len(all_docs))
+    return all_docs
 
 
 def _prepare_search_queries(requirements_text: str) -> List[str]:
-    """Формирует запросы для поиска путем:
-    1) извлечения специальных запросов для сущностей;
-    2) извлечения обычных ключевых запросов с помощью LLM;
-    3) объединения (приоритет - запросам сущностей).
-    Если ничего не нашли - просто берем первые 10 слов требований.
-    """
+    """Формирует запросы для поиска"""
     if not requirements_text.strip():
-        return [""]  # Пустой запрос для фильтрации
+        return [""]
 
     # Извлекаем ключевые запросы
     key_queries = extract_key_queries(requirements_text)
@@ -171,153 +253,6 @@ def _prepare_search_queries(requirements_text: str) -> List[str]:
     return [fallback_query]
 
 
-def batch_service_search(store_name: str, queries: List[str], filters: dict,
-                         k_per_query: int, embeddings_model) -> List:
-    """Батчевый поиск по одному хранилищу"""
-    logger.debug("[batch_service_search] <- store='%s', queries='%s', filters='%s', k_per_query=%d",
-                 store_name, queries, filters, k_per_query)
-
-    store = get_vectorstore(store_name, embedding_model=embeddings_model)
-    all_docs = []
-
-    # ДОБАВИТЬ ЛОГИРОВАНИЕ ФИЛЬТРОВ ДЛЯ СРАВНЕНИЯ
-    logger.debug("[batch_service_search] Store: %s, Filters: %s", store_name, filters)
-
-    for query in queries:
-        try:
-            logger.debug("[batch_service_search] Searching query = '%s'", query)
-            docs = store.similarity_search(query, k=k_per_query, filter=filters)
-            all_docs.extend(docs)
-            logger.debug("[batch_service_search] query '%s' found %d docs",
-                        store_name, query[:50], len(docs))
-        except Exception as e:
-            logger.error("[batch_service_search] Error searching '%s'",query[:50], str(e))
-
-    logger.debug("[batch_service_search] -> %d docs", len(all_docs))
-
-    return all_docs
-
-
-def batch_platform_search(queries: List[str], exclude_page_ids: Optional[List[str]],
-                          k_per_query: int, embeddings_model, exclude_services: Optional[List[str]] = None) -> List:
-    """
-    Оптимизированный поиск по платформенным сервисам
-
-    Args:
-        queries: Список поисковых запросов
-        exclude_page_ids: Исключаемые page_id
-        k_per_query: Количество результатов на запрос
-        embeddings_model: Модель эмбеддингов
-        exclude_services: Список кодов сервисов для исключения из поиска
-    """
-    logger.debug("[batch_platform_search] <- %d queries, queries='%s', exclude pages = {%s}, exclude services = {%s}",
-                 len(queries), queries, exclude_page_ids, exclude_services)
-
-    platform_services = get_platform_services()
-    if not platform_services:
-        logger.warning("[batch_platform_search] No platform services found")
-        return []
-
-    # Фильтруем исключаемые сервисы (например, dataModel, в котором искали ранее)
-    if exclude_services:
-        exclude_set = set(exclude_services)
-        platform_services = [svc for svc in platform_services if svc["code"] not in exclude_set]
-        logger.debug("[batch_platform_search] Excluded services: %s", exclude_services)
-
-    if not platform_services:
-        logger.warning("[batch_platform_search] No platform services left after exclusions")
-        return []
-
-    platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
-
-    try:
-        collection_data = platform_store.get()
-        total_docs = len(collection_data.get('ids', []))
-        logger.debug("[batch_platform_search] Platform collection contains %d documents", total_docs)
-
-        # ОТЛАДКА: Показываем отфильтрованные сервисы
-        if collection_data.get('metadatas'):
-            sample_metadata = collection_data['metadatas'][:5]
-            logger.debug("[batch_platform_search] Sample metadata: %s", sample_metadata)
-
-            service_codes_in_data = set()
-            for metadata in collection_data['metadatas'][:100]:
-                if metadata and 'service_code' in metadata:
-                    service_codes_in_data.add(metadata['service_code'])
-
-            logger.debug("[batch_platform_search] Service codes in data: %s", sorted(service_codes_in_data))
-
-        if total_docs == 0:
-            logger.warning("[batch_platform_search] Platform collection is empty")
-            return []
-
-    except Exception as e:
-        logger.error("[batch_platform_search] Error accessing platform collection: %s", str(e))
-        return []
-
-    all_platform_docs = []
-    platform_codes = [svc["code"] for svc in platform_services]  # Уже отфильтрованный список
-    logger.debug("[batch_platform_search] Searching in platform services: %s", platform_codes)
-
-    exclude_set = set(exclude_page_ids) if exclude_page_ids else set()
-
-    for query in queries:
-        try:
-            filters = {"service_code": {"$in": platform_codes}} # Используем отфильтрованный список
-            logger.debug("[batch_platform_search] Searching query = '%s', filters = '%s'", query[:100]+"...", filters)
-
-            # ИСПРАВЛЕНИЕ: Ищем с простым фильтром, исключаем вручную
-            docs = platform_store.similarity_search(
-                query,
-                k=(k_per_query * len(platform_services)) + len(exclude_set),
-                filter=filters
-            )
-
-            # Фильтруем исключения вручную
-            if exclude_set:
-                filtered_docs = [
-                    doc for doc in docs
-                    if doc.metadata.get('page_id') not in exclude_set
-                ]
-                logger.debug("[_batch_platform_search] Filtered %d -> %d docs (excluded %d)",
-                             len(docs), len(filtered_docs), len(docs) - len(filtered_docs))
-                docs = filtered_docs
-
-            # Ограничиваем до нужного количества
-            docs = docs[:k_per_query * len(platform_services)]
-
-            all_platform_docs.extend(docs)
-            logger.debug("[batch_platform_search] Query '%s' found %d platform docs", query[:50], len(docs))
-
-        except Exception as e:
-            logger.error("[batch_platform_search] Error searching query '%s': %s", query[:50], str(e))
-
-            # Fallback: Поиск вообще без фильтров
-            try:
-                logger.info("[batch_platform_search] Retrying query '%s' without filters", query[:50])
-                docs = platform_store.similarity_search(query, k=k_per_query * 3)
-
-                # Фильтруем вручную и по service_code, и по exclude_page_ids
-                filtered_docs = []
-                for doc in docs:
-                    doc_service = doc.metadata.get('service_code')
-                    doc_page_id = doc.metadata.get('page_id')
-
-                    if (doc_service in platform_codes and
-                            (not exclude_set or doc_page_id not in exclude_set)):
-                        filtered_docs.append(doc)
-
-                filtered_docs = filtered_docs[:k_per_query]
-                all_platform_docs.extend(filtered_docs)
-                logger.debug("[batch_platform_search] Fallback found %d docs", len(filtered_docs))
-
-            except Exception as e2:
-                logger.error("[batch_platform_search] Fallback also failed: %s", str(e2))
-
-    logger.info("[batch_platform_search] -> %d platform docs found", len(all_platform_docs))
-    return all_platform_docs
-
-
 def _fast_deduplicate_documents(docs: List) -> List:
     """Быстрая дедупликация документов"""
     seen_composite_keys = set()
@@ -325,9 +260,8 @@ def _fast_deduplicate_documents(docs: List) -> List:
 
     for doc in docs:
         page_id = doc.metadata.get('page_id')
-        content_hash = hash(doc.page_content[:100])  # Используем первые 100 символов
+        content_hash = hash(doc.page_content[:100])
 
-        # Быстрая проверка через set
         composite_key = (page_id, content_hash)
         if composite_key not in seen_composite_keys:
             seen_composite_keys.add(composite_key)
@@ -342,12 +276,9 @@ def _smart_truncate_context(context: str, max_length: int) -> str:
     if len(context) <= max_length:
         return context
 
-    # Обрезаем до максимальной длины
     truncated = context[:max_length]
-
-    # Ищем последнюю точку, чтобы не обрезать посередине предложения
     last_period = truncated.rfind('.')
-    if last_period > max_length * 0.8:  # Если точка не слишком далеко от конца
+    if last_period > max_length * 0.8:
         truncated = truncated[:last_period + 1]
 
     logger.debug("[_smart_truncate_context] Truncated context from %d to %d chars", len(context), len(truncated))
@@ -357,10 +288,8 @@ def _smart_truncate_context(context: str, max_length: int) -> str:
 def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
     """
     Извлечение контекста по ссылкам ТОЛЬКО из неподтвержденных (цветных) фрагментов.
-    Ссылки должны искаться только в неподтвержденных требованиях.
     """
-    logger.info("[_extract_linked_context_optimized] <- Processing %d pages for links from unconfirmed fragments",
-                 len(exclude_page_ids))
+    logger.info("[_extract_linked_context_optimized] <- Processing %d pages for links", len(exclude_page_ids))
 
     if not exclude_page_ids:
         return []
@@ -369,9 +298,6 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
     max_linked_pages = 3
     max_pages = 5
 
-    # Обрабатываем только первые max_pages страниц
-    if len(exclude_page_ids) <= max_linked_pages:
-        logger.warning("[_extract_linked_context_optimized] page ids truncated to %d items", max_pages)
     for page_id in exclude_page_ids[:max_pages]:
         try:
             content = get_page_content_by_id(page_id, clean_html=False)
@@ -380,11 +306,9 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
 
             # Ищем ссылки ТОЛЬКО в неподтвержденных фрагментах
             linked_page_ids = _extract_links_from_unconfirmed_fragments(content, exclude_page_ids)
-            logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments of page %s",
-                         len(linked_page_ids), page_id)
+            logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments",
+                         len(linked_page_ids))
 
-            # Ограничиваем количество ссылок на страницу
-            # TODO ограничивать нужно с учетом общего числа страниц, а не "в лоб". То есть учитывать "оставшиеся" токены.
             for linked_page_id in linked_page_ids[:2]:
                 if len(linked_docs) >= max_linked_pages:
                     break
@@ -392,11 +316,8 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
                 linked_content = _get_approved_content_cached(linked_page_id)
                 if linked_content and linked_content.strip():
                     linked_docs.append(linked_content)
-                    logger.debug(
-                        "[_extract_linked_context_optimized] Added approved content from linked page '%s' (%d chars)",
-                        linked_page_id, len(linked_content))
-                    logger.debug("[_extract_linked_context_optimized] linked page '%s' approved data = {%s}",
-                                 linked_page_id, linked_content[:500] + "...")
+                    logger.debug("[_extract_linked_context_optimized] Added content from linked page '%s'",
+                                 linked_page_id)
 
             if len(linked_docs) >= max_linked_pages:
                 break
@@ -404,62 +325,36 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
         except Exception as e:
             logger.error("[_extract_linked_context_optimized] Error processing page_id=%s: %s", page_id, str(e))
 
-    logger.info("[_extract_linked_context_optimized] -> Found %d linked documents from unconfirmed fragments",
-                len(linked_docs))
+    logger.info("[_extract_linked_context_optimized] -> Found %d linked documents", len(linked_docs))
     return linked_docs
 
 
 def _extract_links_from_unconfirmed_fragments(html_content: str, exclude_page_ids: List[str]) -> List[str]:
-    """
-    НОВАЯ ФУНКЦИЯ: Извлекает ссылки ТОЛЬКО из неподтвержденных (цветных) фрагментов требований.
-    Это правильная реализация согласно постановке задачи.
-    """
+    """Извлекает ссылки ТОЛЬКО из неподтвержденных (цветных) фрагментов требований."""
     soup = BeautifulSoup(html_content, 'html.parser')
     found_page_ids = set()
     exclude_set = set(exclude_page_ids)
 
-    # Счетчики для отладки
-    colored_elements_count = 0
-    links_found_count = 0
-
-    # Ищем все элементы, которые могут содержать цветной (неподтвержденный) текст
     for element in soup.find_all(["p", "li", "span", "div", "td", "th"]):
-        # Используем существующую функцию для определения цветного стиля
         if not has_colored_style(element):
-            continue  # Пропускаем подтвержденные (черные) элементы
+            continue
 
-        colored_elements_count += 1
-
-        # Ищем ссылки в этом цветном элементе
         element_links = _extract_confluence_links_from_element(element)
-
         for linked_page_id in element_links:
             if linked_page_id not in exclude_set and linked_page_id not in found_page_ids:
                 found_page_ids.add(linked_page_id)
-                links_found_count += 1
-                logger.debug("[_extract_links_from_unconfirmed_fragments] Found link to page_id=%s in colored element",
-                             linked_page_id)
-
-    logger.debug("[_extract_links_from_unconfirmed_fragments] Processed: colored_elements=%d, unique_links_found=%d",
-                 colored_elements_count, links_found_count)
 
     return list(found_page_ids)
 
 
 def _extract_confluence_links_from_element(element) -> List[str]:
-    """
-    Извлекает все ссылки на страницы Confluence из конкретного элемента.
-    Поддерживает разные форматы ссылок Confluence.
-    (Эта функция уже была в коде и работает корректно)
-    """
+    """Извлекает все ссылки на страницы Confluence из конкретного элемента."""
     import re
     page_ids = []
 
     # 1. Обычные HTML ссылки с pageId в URL
     for link in element.find_all('a', href=True):
         href = link['href']
-
-        # Различные форматы ссылок Confluence
         patterns = [
             r'pageId=(\d+)',
             r'/pages/viewpage\.action\?pageId=(\d+)',
@@ -475,26 +370,19 @@ def _extract_confluence_links_from_element(element) -> List[str]:
 
     # 2. Confluence макросы ссылок
     for ac_link in element.find_all('ac:link'):
-        # Ссылка через ri:page
         ri_page = ac_link.find('ri:page')
         if ri_page:
             page_id = ri_page.get('ri:content-id')
             if page_id:
                 page_ids.append(page_id)
-            else:
-                # Если нет ri:content-id, можно попробовать найти по названию
-                content_title = ri_page.get('ri:content-title')
-                if content_title:
-                    logger.debug("[_extract_confluence_links_from_element] Found link by title: %s (not resolved)",
-                                 content_title)
 
-    # 3. Прямые ri:page теги (иногда встречаются отдельно)
+    # 3. Прямые ri:page теги
     for ri_page in element.find_all('ri:page'):
         page_id = ri_page.get('ri:content-id')
         if page_id:
             page_ids.append(page_id)
 
-    return list(set(page_ids))  # Убираем дубликаты
+    return list(set(page_ids))
 
 
 def _get_approved_content_cached(page_id: str) -> Optional[str]:
@@ -506,35 +394,7 @@ def _get_approved_content_cached(page_id: str) -> Optional[str]:
             return approved_content.strip() if approved_content else None
     except Exception as e:
         logger.error("[_get_approved_content_cached] Error loading page_id=%s: %s", page_id, str(e))
-
     return None
-
-
-# УДАЛЕНЫ СТАРЫЕ ФУНКЦИИ:
-# - _extract_links_fast() (неправильная логика)
-# Остались корректные функции, которые уже были в коде
-
-def extract_confluence_links(html_content: str) -> List[str]:
-    """Более точное извлечение ссылок на страницы Confluence"""
-    soup = BeautifulSoup(html_content, 'html.parser')
-    page_ids = set()
-
-    # Ищем все типы ссылок Confluence
-    for link in soup.find_all(['a', 'ac:link']):
-        # Стандартные ссылки
-        href = link.get('href', '')
-        if 'pageId=' in href:
-            match = re.search(r'pageId=(\d+)', href)
-            if match:
-                page_ids.add(match.group(1))
-
-        # Внутренние ссылки Confluence
-        ri_page = link.find('ri:page')
-        if ri_page and ri_page.get('ri:content-title'):
-            # Здесь можно добавить резолвинг названия в page_id через Confluence API
-            pass
-
-    return list(page_ids)
 
 
 def _extract_json_from_llm_response(response: str) -> Optional[str]:
@@ -548,14 +408,14 @@ def _extract_json_from_llm_response(response: str) -> Optional[str]:
     response = response.strip()
     response = response.strip("```json").strip("```").strip()
 
-    # Ищем JSON блоки различными способами
+    # ИСПРАВЛЕНИЕ: Исправляем порядок и жадность паттернов
     json_patterns = [
-        # 1. JSON в markdown блоке
-        r'```json\s*(\{.*?\})\s*```',
-        # 2. JSON между фигурными скобками (многострочный)
-        r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})',
-        # 3. Простой поиск от первой { до последней }
+        # 1. ИСПРАВЛЕНО: Жадный поиск JSON в markdown блоке
+        r'```json\s*(\{.*\})\s*```',  # БЫЛО: (\{.*?\}) - СТАЛО: (\{.*\})
+        # 2. Простой поиск от первой { до последней } (жадный)
         r'(\{.*\})',
+        # 3. Поиск сбалансированных скобок (как fallback)
+        r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})',
     ]
 
     for pattern in json_patterns:
@@ -603,21 +463,21 @@ def _extract_json_from_llm_response(response: str) -> Optional[str]:
     return None
 
 
-_encoding = tiktoken.get_encoding("cl100k_base")  # Заменить на токенизатор DeepSeek, если доступен
+_encoding = tiktoken.get_encoding("cl100k_base")
 
 
 def count_tokens(text: str) -> int:
-    """Подсчитывает количество токенов в тексте с помощью токенизатора tiktoken."""
+    """Подсчитывает количество токенов в тексте"""
     if LLM_PROVIDER == "deepseek":
         import tiktoken
-        encoding = tiktoken.get_encoding("cl100k_base")  # Уточните у DeepSeek
+        encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(text))
     else:
         try:
             return len(_encoding.encode(text))
         except Exception as e:
             logger.error("[count_tokens] Error counting tokens: %s", str(e))
-            return len(text.split())  # Запасной вариант: подсчет слов
+            return len(text.split())
 
 
 def analyze_text(text: str, prompt_template: Optional[str] = None, service_code: Optional[str] = None):
@@ -627,7 +487,6 @@ def analyze_text(text: str, prompt_template: Optional[str] = None, service_code:
         logger.info("[analyze_text] Resolved service_code: %s", service_code)
 
     chain = build_chain(prompt_template)
-    # ИЗМЕНЕНИЕ: передаем текст требований для семантического поиска
     context = build_context(service_code, requirements_text=text)
 
     try:
@@ -678,70 +537,62 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             [f"Page ID: {req['page_id']}\n{req['content']}" for req in requirements]
         )
 
-        logger.debug("[analyze_pages] Resolved requirements: %s", requirements_text)
-        # ИЗМЕНЕНИЕ: передаем текст требований для семантического поиска
+        # Используем новую функцию построения контекста
         context = build_context(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
 
         context_tokens = count_tokens(context)
         if context_tokens > max_context_tokens:
-            logging.warning("[analyze_pages] Context too large (%d tokens), limiting analysis to %d pages",
-                            context_tokens, len(valid_page_ids))
+            logging.warning("[analyze_pages] Context too large (%d tokens), limiting analysis", context_tokens)
             return [{"page_id": pid, "analysis": "Анализ невозможен: контекст слишком большой"} for pid in
                     valid_page_ids]
+            # return [{"Страница №": pid, "Анализ": "Анализ невозможен: контекст слишком большой"} for pid in
+            #         valid_page_ids]
 
-        # Остальная часть функции остается без изменений...
+        # Проверяем общий размер
         full_prompt = PromptTemplate(
             input_variables=["requirement", "context"],
             template=template
         ).format(requirement=requirements_text, context=context)
         total_tokens = count_tokens(full_prompt)
 
-        logger.debug("[analyze_pages] Tokens: requirements=%d, context=%d, template=%d, total=%d",
-                     current_tokens, context_tokens, template_tokens, total_tokens)
+        logger.debug("[analyze_pages] Tokens: requirements=%d, context=%d, total=%d",
+                     current_tokens, context_tokens, total_tokens)
 
         if total_tokens > max_tokens:
-            logging.warning("[analyze_pages] Total tokens (%d) exceed max_tokens (%d)", total_tokens, max_tokens)
+            logging.warning("[analyze_pages] Total tokens (%d) exceed limit (%d)", total_tokens, max_tokens)
             return [{"page_id": pid, "analysis": "Анализ невозможен: превышен лимит токенов"} for pid in valid_page_ids]
+            # return [{"Страница №": pid, "Анализ": "Анализ невозможен: превышен лимит токенов"} for pid in valid_page_ids]
 
         chain = build_chain(prompt_template)
         try:
             result = chain.run({"requirement": requirements_text, "context": context})
+            logger.debug("[analyze_pages] Raw LLM response: '%s'", result)
 
-            # ДОБАВЛЯЕМ ОТЛАДКУ
-            logger.info("[analyze_pages] Raw LLM response: %s", result[:1000])
-
-            # УЛУЧШЕННАЯ ОЧИСТКА JSON
+            # Извлекаем и парсим JSON
             cleaned_result = _extract_json_from_llm_response(result)
-
             if not cleaned_result:
-                logger.error("[analyze_pages] No valid JSON found in LLM response: %s", result[:500])
+                logger.error("[analyze_pages] No valid JSON found in LLM response")
                 return [{"page_id": pid, "analysis": "Ошибка: LLM не вернул корректный JSON"} for pid in valid_page_ids]
-
-            logger.info("[analyze_pages] Cleaned JSON: %s", cleaned_result[:500])
+                # return [{"Страница №": pid, "Анализ": "Ошибка: LLM не вернул корректный JSON"} for pid in valid_page_ids]
 
             try:
                 parsed_result = json.loads(cleaned_result)
-                logger.info("[analyze_pages] Parsed result keys: %s", list(parsed_result.keys()))
-                logger.info("[analyze_pages] Expected page_ids: %s", valid_page_ids)
+                logger.info("[analyze_pages] Successfully parsed JSON response")
             except json.JSONDecodeError as json_err:
-                logger.error("[analyze_pages] JSON decode error: %s\nCleaned result: %s",
-                             str(json_err), cleaned_result[:500])
-                # Fallback: возвращаем весь ответ как единый анализ
-                return [{"page_id": valid_page_ids[0] if valid_page_ids else "unknown",
-                         "analysis": result}]
+                logger.error("[analyze_pages] JSON decode error: %s", str(json_err))
+                return [{"page_id": valid_page_ids[0] if valid_page_ids else "unknown", "analysis": result}]
 
             if not isinstance(parsed_result, dict):
-                logger.error("[analyze_pages] Result is not a dictionary: %s", type(parsed_result))
+                logger.error("[analyze_pages] Result is not a dictionary")
                 return [{"page_id": pid, "analysis": "Ошибка: неожиданный формат ответа LLM"} for pid in valid_page_ids]
+                # return [{"Страница №": pid, "Анализ": "Ошибка: неожиданный формат ответа LLM"} for pid in valid_page_ids]
 
             results = []
+            logger.debug("[analyze_pages] results: '%s'", parsed_result)
             for page_id in valid_page_ids:
-                analysis = parsed_result.get(page_id, f"Анализ не найден для страницы {page_id}")
+                analysis = parsed_result.get(page_id, f"Анализ для страницы {page_id} не найден")
                 results.append({"page_id": page_id, "analysis": analysis})
-                # ДОПОЛНИТЕЛЬНАЯ ОТЛАДКА
-                if page_id not in parsed_result:
-                    logging.warning("[analyze_pages] Page ID %s not found in LLM response keys: %s",
-                                    page_id, list(parsed_result.keys()))
+                # results.append({"Страница №": page_id, "Анализ": analysis})
 
             logger.info("[analyze_pages] -> Result count: %d", len(results))
             return results
@@ -750,10 +601,11 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             if "token limit" in str(e).lower():
                 logger.error("[analyze_pages] Token limit exceeded: %s", str(e))
                 return [{"page_id": pid, "analysis": "Ошибка: превышен лимит токенов модели"} for pid in valid_page_ids]
+                # return [{"Страница №": pid, "Анализ": "Ошибка: превышен лимит токенов модели"} for pid in valid_page_ids]
             logger.error("[analyze_pages] Error in LLM chain: %s", str(e))
             raise
     except Exception as e:
-        logging.exception("[analyze_pages] Ошибка в /analyze")
+        logging.exception("[analyze_pages] Error in analyze_pages")
         raise
 
 
@@ -761,6 +613,7 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
                            service_code: Optional[str] = None):
     """
     Анализирует новые требования и их соответствие шаблонам с передачей шаблона в LLM.
+    Обновлено для работы с единым хранилищем.
     """
     logger.info("[analyze_with_templates] <- items count: %d, service_code: %s", len(items), service_code)
 
@@ -770,8 +623,6 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
         logger.info("[analyze_with_templates] Resolved service_code: %s", service_code)
 
     results = []
-
-    # Создаем цепочку для анализа шаблонов
     template_chain = build_template_analysis_chain(prompt_template)
 
     for item in items:
@@ -798,19 +649,12 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
             })
             continue
 
-        # Конвертируем шаблон в читаемый формат
-        # TODO похоже лишнее, так как шаблон очистили при сохранении.
-        # template_content = extract_approved_fragments(template_html)
         template_content = template_html
 
-        if not template_content or not template_content.strip():
-            logger.warning("[analyze_with_templates] Empty template content for type: %s", requirement_type)
-            template_content = template_html  # Используем исходный HTML как fallback
-
-        # Строим контекст (исключаем анализируемую страницу)
+        # Строим контекст с использованием единого хранилища
         context = build_context(
             service_code=service_code,
-            requirements_text=content,  # Передаем текст для семантического поиска
+            requirements_text=content,
             exclude_page_ids=[page_id]
         )
 
@@ -818,9 +662,8 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
         legacy_formatting_issues = _perform_legacy_structure_check(template_html, content)
 
         try:
-            # Анализ через LLM с передачей шаблона
             logger.debug(
-                "[analyze_with_templates] Sending to LLM: template length=%d, content length=%d, context length=%d",
+                "[analyze_with_templates] Sending to LLM: template=%d chars, content=%d chars, context=%d chars",
                 len(template_content), len(content), len(context))
 
             llm_result = template_chain.run({
@@ -838,7 +681,7 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
                              str(json_error))
                 template_analysis = {
                     "error": "Не удалось разобрать ответ LLM",
-                    "raw_response": llm_result[:500],  # Первые 500 символов для отладки
+                    "raw_response": llm_result[:500],
                     "parse_error": str(json_error)
                 }
 
@@ -848,7 +691,8 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
                 "template_analysis": template_analysis,
                 "legacy_formatting_issues": legacy_formatting_issues,
                 "template_used": requirement_type,
-                "analysis_timestamp": time.time()
+                "analysis_timestamp": time.time(),
+                "storage_used": UNIFIED_STORAGE_NAME
             })
 
         except Exception as e:
@@ -909,7 +753,6 @@ def _perform_legacy_structure_check(template_html: str, content: str) -> List[st
 
 def _parse_llm_template_response(llm_response: str) -> dict:
     """Парсит JSON ответ от LLM"""
-    # Используем существующую функцию извлечения JSON
     json_content = _extract_json_from_llm_response(llm_response)
 
     if not json_content:
@@ -923,155 +766,10 @@ def _parse_llm_template_response(llm_response: str) -> dict:
 
     if missing_sections:
         logger.warning("[_parse_llm_template_response] Missing sections in LLM response: %s", missing_sections)
-        # Добавляем недостающие секции с значениями по умолчанию
         for section in missing_sections:
             parsed_result[section] = {"error": f"Section {section} missing from LLM response"}
 
     return parsed_result
-
-def _search_data_models(entity_queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                        embeddings_model) -> List:
-    """
-    Специализированный поиск страниц с моделями данных
-
-    Args:
-        entity_queries: Запросы для поиска атрибутов сущностей
-        service_code: Код сервиса для поиска в сервисном хранилище
-        exclude_page_ids: Исключаемые страницы
-        embeddings_model: Модель эмбеддингов
-    """
-    if not entity_queries:
-        return []
-
-    logger.debug("[_search_data_models] <- Searching with %d entity queries for service: %s",
-                 len(entity_queries), service_code)
-
-    # 1. ПОИСК В ПЛАТФОРМЕННОМ СЕРВИСЕ dataModel (всегда)
-    platform_docs = search_in_platform_data_models(entity_queries, exclude_page_ids, embeddings_model)
-
-    # 2. ПОИСК В КОНКРЕТНОМ СЕРВИСНОМ ХРАНИЛИЩЕ
-    service_docs = search_in_service_data_models(entity_queries, service_code, exclude_page_ids, embeddings_model)
-
-    all_docs = platform_docs + service_docs
-
-    # 3. ДЕДУПЛИКАЦИЯ (могут быть пересечения)
-    unique_docs = _fast_deduplicate_documents(all_docs)
-
-    logger.info("[_search_data_models] -> Found %d unique data model documents", len(unique_docs))
-    return unique_docs
-
-
-
-def search_in_service_data_models(entity_queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                                  embeddings_model) -> List:
-    """Поиск моделей данных в конкретном сервисном хранилище"""
-    logger.debug("[search_in_service_data_models] <- %d entity queries: %s, service_code='%s', exclude_page_ids={%s}",
-                 len(entity_queries), entity_queries, service_code, exclude_page_ids)
-
-    try:
-        service_store = get_vectorstore("service_pages", embedding_model=embeddings_model)
-
-        # Фильтр для конкретного сервиса
-        base_filter = {"service_code": {"$eq": service_code}}
-        if exclude_page_ids:
-            filters = {
-                "$and": [
-                    base_filter,
-                    {"page_id": {"$nin": exclude_page_ids}}
-                ]
-            }
-        else:
-            filters = base_filter
-
-        logger.debug("[search_in_service_data_models] filter: %s", filters)
-        all_docs = []
-        for query in entity_queries:
-            try:
-                # equery = re.sub(r'([\[\]])', r'\\\1', query)  # Экранируем квадратные скобки
-                # equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
-                logger.debug("[search_in_service_data_models] query: %s", query)
-                docs = service_store.similarity_search(query, k=3, filter=filters)
-
-                # Дополнительно фильтруем по признакам модели данных
-                model_docs = [doc for doc in docs if _is_data_model_page(doc)]
-                all_docs.extend(model_docs)
-
-                logger.debug("[search_in_service_data_models] Query '%s' in service %s found %d model docs",
-                             query[:50], service_code, len(model_docs))
-            except Exception as e:
-                logger.warning("[search_in_service_data_models] Error with query '%s': %s",
-                               query[:50], str(e))
-
-        logger.debug("[search_in_service_data_models] -> all_docs: first 3 items %s", all_docs[:3])
-        return all_docs
-
-    except Exception as e:
-        logger.error("[search_in_service_data_models] Error: %s", str(e))
-        return []
-
-
-def search_in_platform_data_models(entity_queries: List[str], exclude_page_ids: Optional[List[str]],
-                                   embeddings_model) -> List:
-    """Поиск в платформенном сервисе dataModel"""
-    logger.debug("[search_in_platform_data_models] <- exclude_page_ids={%s}, %d entity queries: %s",
-                 exclude_page_ids, len(entity_queries), entity_queries)
-    try:
-        platform_store = get_vectorstore("platform_context", embedding_model=embeddings_model)
-
-        # Фильтр для dataModel платформенного сервиса
-        base_filter = {"service_code": {"$eq": "dataModel"}}
-        if exclude_page_ids:
-            filters = {
-                "$and": [
-                    base_filter,
-                    {"page_id": {"$nin": exclude_page_ids}}
-                ]
-            }
-        else:
-            filters = base_filter
-
-        logger.debug("[search_in_platform_data_models] filter: %s", filters)
-
-        all_docs = []
-        for query in entity_queries:
-            try:
-                # equery = re.sub(r'([\[\]])', r'\\\1', query) # Экранируем квадратные скобки
-                equery = re.sub(r'([\[\]])', r'', query)  # Убираем квадратные скобки
-                logger.debug("[search_in_platform_data_models] query: %s", equery)
-                # docs = platform_store.similarity_search(equery, k=3, filter=filters)
-                logger.warning("[search_in_platform_data_models] DUMP query == %s", "")
-                docs = platform_store.similarity_search("", k=3, filter=filters)
-                all_docs.extend(docs)
-                logger.debug("[search_in_platform_data_models] Query '%s' found %d docs",
-                             equery[:50], len(docs))
-            except Exception as e:
-                logger.warning("[search_in_platform_data_models] Error with query '%s': %s",
-                               query[:100], str(e))
-
-        logger.debug("[search_in_platform_data_models] -> all_docs: %s", all_docs)
-        return all_docs
-
-    except Exception as e:
-        logger.error("[search_in_platform_data_models] Error: %s", str(e))
-        return []
-
-
-def _is_data_model_page(doc) -> bool:
-    """
-    Определяет, является ли страница описанием модели данных
-    Использует только НАДЕЖНЫЕ признаки
-    """
-    content = doc.page_content.lower()
-
-    # ГЛАВНЫЙ признак - наличие фразы "атрибутный состав сущности"
-    has_attribute_composition = 'атрибутный состав сущности' in content
-
-    if has_attribute_composition:
-        logger.debug("[_is_data_model_page] Document '%s' identified as data model (has 'атрибутный состав сущности')",
-                     doc.metadata.get('title', '')[:50])
-        return True
-
-    return False
 
 
 def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMChain:
@@ -1079,7 +777,6 @@ def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMCha
     logger.info("[build_template_analysis_chain] <- custom_prompt provided: %s", bool(custom_prompt))
 
     if custom_prompt:
-        # Проверяем, что промпт содержит необходимые переменные
         required_vars = ["{requirement}", "{template}", "{context}"]
         if not all(var in custom_prompt for var in required_vars):
             raise ValueError(f"Custom prompt template must include {required_vars}")
@@ -1091,8 +788,7 @@ def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMCha
             if not template:
                 raise ValueError("Template analysis prompt file is empty")
         except FileNotFoundError:
-            logger.error("[build_template_analysis_chain] Файл %s не найден",TEMPLATE_ANALYSIS_PROMPT_FILE)
-            # Fallback промпт
+            logger.error("[build_template_analysis_chain] Файл %s не найден", TEMPLATE_ANALYSIS_PROMPT_FILE)
             template = """
 Проанализируй соответствие требований шаблону:
 
