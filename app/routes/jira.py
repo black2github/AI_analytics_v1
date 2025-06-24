@@ -7,7 +7,9 @@ from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.jira_loader import extract_confluence_page_ids_from_jira_tasks
-from app.rag_pipeline import analyze_pages
+from app.legacy.rag_pipeline_legacy import analyze_pages
+
+#from app.rag_pipeline import analyze_pages
 
 # Создаем APIRouter для FastAPI
 router = APIRouter()

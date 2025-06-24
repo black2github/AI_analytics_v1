@@ -1,32 +1,101 @@
 @echo off
-REM Óñòàíîâêà èìåíè ëîã-ôàéëà ñ äàòîé è âðåìåíåì
-set LOGFILE=run_test.log
+REM run_test.bat - Ð²ÐµÑ€ÑÐ¸Ñ Ð´Ð»Ñ Windows
+setlocal EnableDelayedExpansion
 
-REM Î÷èñòêà ñòàðîãî ëîãà (åñëè íóæíî)
-del "%LOGFILE%" >nul 2>&1
+REM Ð£ÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ° Ð¸Ð¼ÐµÐ½Ð¸ Ð»Ð¾Ð³-Ñ„Ð°Ð¹Ð»Ð° Ñ Ð´Ð°Ñ‚Ð¾Ð¹ Ð¸ Ð²Ñ€ÐµÐ¼ÐµÐ½ÐµÐ¼
+for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "dt=%%a"
+set "YYYY=%dt:~0,4%"
+set "MM=%dt:~4,2%"
+set "DD=%dt:~6,2%"
+set "HH=%dt:~8,2%"
+set "Min=%dt:~10,2%"
+set "Sec=%dt:~12,2%"
+set LOGFILE=run_test_%YYYY%%MM%%DD%_%HH%%Min%%Sec%.log
 
-REM Àêòèâèðóåì âèðòóàëüíîå îêðóæåíèå
-call venv\Scripts\activate.bat >> "%LOGFILE%" 2>&1
+echo ========================================
+echo Requirements Analyzer Test Runner (Refactored)
+echo Log file: %LOGFILE%
+echo ========================================
 
-REM Çàïóñê FastAPI ÷åðåç uvicorn ñ âûâîäîì â ëîã
-REM echo Çàïóñê uvicorn... >> "%LOGFILE%"
-REM uvicorn app.main:app --host 127.0.0.1 --port 8000 >> "%LOGFILE%" 2>&1
+REM ÐŸÑ€Ð¾Ð²ÐµÑ€ÑÐµÐ¼ Ð½Ð°Ð»Ð¸Ñ‡Ð¸Ðµ Ð²Ð¸Ñ€Ñ‚ÑƒÐ°Ð»ÑŒÐ½Ð¾Ð³Ð¾ Ð¾ÐºÑ€ÑƒÐ¶ÐµÐ½Ð¸Ñ
+if not exist "venv\Scripts\activate.bat" (
+    echo ERROR: Virtual environment not found at venv\Scripts\activate.bat
+    echo Please create virtual environment first:
+    echo   python -m venv venv
+    echo   venv\Scripts\activate.bat
+    echo   pip install -r requirements.txt
+    pause
+    exit /b 1
+)
 
-REM # Óñòàíîâêà çàâèñèìîñòåé äëÿ òåñòèðîâàíèÿ
-REM pip install -r requirements-test.txt
+REM ÐÐºÑ‚Ð¸Ð²Ð¸Ñ€ÑƒÐµÐ¼ Ð²Ð¸Ñ€Ñ‚ÑƒÐ°Ð»ÑŒÐ½Ð¾Ðµ Ð¾ÐºÑ€ÑƒÐ¶ÐµÐ½Ð¸Ðµ
+echo Activating virtual environment...
+call venv\Scripts\activate.bat
 
-REM # Çàïóñê âñåõ òåñòîâ
-python run_tests.py >> "%LOGFILE%" 2>&1
+REM Ð£ÑÑ‚Ð°Ð½Ð°Ð²Ð»Ð¸Ð²Ð°ÐµÐ¼ Ð¿ÐµÑ€ÐµÐ¼ÐµÐ½Ð½ÑƒÑŽ Ð¾ÐºÑ€ÑƒÐ¶ÐµÐ½Ð¸Ñ Ð´Ð»Ñ Ñ‚ÐµÑÑ‚Ð¾Ð²
+set TESTING=true
 
-REM # Çàïóñê êîíêðåòíîé ãðóïïû òåñòîâ
-REM python run_tests.py test_history_cleaner.py
-REM python run_tests.py test_rag_pipeline.py
+REM Ð’Ñ‹Ð²Ð¾Ð´Ð¸Ð¼ Ð²ÐµÑ€ÑÐ¸ÑŽ Python Ð´Ð»Ñ Ð¾Ñ‚Ð»Ð°Ð´ÐºÐ¸
+echo Python version:
+python --version
 
-REM # Çàïóñê òåñòîâ ñ ïîêðûòèåì
-REM pytest tests/ --cov=app --cov-report=html
+REM Ð’Ñ‹Ð±Ð¾Ñ€ Ñ€ÐµÐ¶Ð¸Ð¼Ð° Ð·Ð°Ð¿ÑƒÑÐºÐ° Ð½Ð° Ð¾ÑÐ½Ð¾Ð²Ðµ Ð¿Ð°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ð°
+if "%1"=="quick" (
+    echo Running quick tests...
+    python run_tests.py quick > "%LOGFILE%" 2>&1
+    set TEST_RESULT=!ERRORLEVEL!
+) else if "%1"=="legacy" (
+    echo Running legacy compatibility tests...
+    python run_tests.py legacy > "%LOGFILE%" 2>&1
+    set TEST_RESULT=!ERRORLEVEL!
+) else if "%1"=="filters" (
+    echo Running content filtering tests...
+    python run_tests.py filters > "%LOGFILE%" 2>&1
+    set TEST_RESULT=!ERRORLEVEL!
+) else if "%1"=="" (
+    echo Running all tests with coverage...
+    python run_tests.py > "%LOGFILE%" 2>&1
+    set TEST_RESULT=!ERRORLEVEL!
+) else (
+    echo Running specific tests: %1
+    python run_tests.py %1 > "%LOGFILE%" 2>&1
+    set TEST_RESULT=!ERRORLEVEL!
+)
 
-REM # Çàïóñê òîëüêî áûñòðûõ òåñòîâ
-REM pytest tests/ -m "not slow"
+REM ÐŸÐ¾ÐºÐ°Ð·Ñ‹Ð²Ð°ÐµÐ¼ Ð¿Ð¾ÑÐ»ÐµÐ´Ð½Ð¸Ðµ ÑÑ‚Ñ€Ð¾ÐºÐ¸ Ð»Ð¾Ð³Ð°
+echo.
+echo ========== Last 10 lines of log ==========
+powershell "Get-Content '%LOGFILE%' | Select-Object -Last 10"
+echo ==========================================
 
-REM # Çàïóñê â verbose ðåæèìå
-REM pytest tests/ -v -s
+REM ÐŸÑ€Ð¾Ð²ÐµÑ€ÑÐµÐ¼ Ñ€ÐµÐ·ÑƒÐ»ÑŒÑ‚Ð°Ñ‚
+if !TEST_RESULT! equ 0 (
+    echo.
+    echo ============================================
+    echo OK TESTS PASSED SUCCESSFULLY!
+    echo ============================================
+    echo Full log saved to: %LOGFILE%
+    if exist "htmlcov\index.html" (
+        echo Coverage report: htmlcov\index.html
+        echo To view: start htmlcov\index.html
+    )
+) else (
+    echo.
+    echo ============================================
+    echo !!! TESTS FAILED!
+    echo ============================================
+    echo Check the log file: %LOGFILE%
+    echo.
+    echo Quick troubleshooting commands:
+    echo   run_test.bat quick     - Run fast tests only
+    echo   run_test.bat legacy    - Run legacy compatibility tests
+    echo   run_test.bat filters   - Run content filtering tests
+    echo   run_test.bat test_routes - Run specific test module
+    echo.
+    echo View full log:
+    echo   type %LOGFILE%
+)
+
+echo.
+echo Press any key to exit...
+pause >nul
