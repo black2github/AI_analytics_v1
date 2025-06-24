@@ -1,11 +1,11 @@
-# app/routes/jira.py
+# app/routes/jira.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """
 Маршруты для работы с Jira API.
 """
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.jira_loader import extract_confluence_page_ids_from_jira_tasks
 from app.rag_pipeline import analyze_pages
 
@@ -18,7 +18,20 @@ logger = logging.getLogger(__name__)
 class PageAnalysisResult(BaseModel):
     """Модель результата анализа одной страницы."""
     page_id: str
-    analysis: Dict[str, Any]  # Сложная структура анализа с разделами и критериями
+    analysis: Union[Dict[str, Any], str]  # ИСПРАВЛЕНИЕ: Может быть и словарем, и строкой
+
+    @field_validator('analysis')
+    @classmethod
+    def validate_analysis(cls, v):
+        """Валидатор для поля analysis - приводим к нужному формату"""
+        if isinstance(v, str):
+            # Если строка - оборачиваем в словарь для единообразия
+            return {"error": v}
+        elif isinstance(v, dict):
+            return v
+        else:
+            # Неожиданный тип - преобразуем в строку и оборачиваем
+            return {"error": str(v)}
 
 
 class JiraTaskRequest(BaseModel):
@@ -111,14 +124,25 @@ async def analyze_jira_task(request: JiraTaskRequest):
 
         logger.info("[analyze_jira_task] -> Analysis completed successfully, got %d results", len(analysis_results))
 
-        # Преобразуем результаты в модели Pydantic
+        # ИСПРАВЛЕНИЕ: Безопасное преобразование результатов
         parsed_results = []
         for result in analysis_results:
-            # result имеет структуру: {"page_id": "123", "analysis": {...}}
-            parsed_results.append(PageAnalysisResult(
-                page_id=result["page_id"],
-                analysis=result["analysis"]  # Теперь Dict[str, Any] вместо str
-            ))
+            try:
+                # result имеет структуру: {"page_id": "123", "analysis": {...} или "строка"}
+                parsed_result = PageAnalysisResult(
+                    page_id=result["page_id"],
+                    analysis=result["analysis"]  # Валидатор обработает тип
+                )
+                parsed_results.append(parsed_result)
+                logger.debug("[analyze_jira_task] Successfully processed result for page_id=%s", result["page_id"])
+            except Exception as e:
+                logger.error("[analyze_jira_task] Error processing result for page_id=%s: %s",
+                           result.get("page_id", "unknown"), str(e))
+                # Создаем запасной результат
+                parsed_results.append(PageAnalysisResult(
+                    page_id=result.get("page_id", "unknown"),
+                    analysis={"error": f"Processing error: {str(e)}"}
+                ))
 
         logger.debug("[analyze_jira_task] Successfully parsed %d analysis results", len(parsed_results))
 

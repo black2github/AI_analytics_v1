@@ -1,32 +1,32 @@
 @echo off
-REM Установка имени лог-файла с датой и временем
+REM РЈСЃС‚Р°РЅРѕРІРєР° РёРјРµРЅРё Р»РѕРі-С„Р°Р№Р»Р° СЃ РґР°С‚РѕР№ Рё РІСЂРµРјРµРЅРµРј
 set LOGFILE=run_test.log
 
-REM Очистка старого лога (если нужно)
+REM РћС‡РёСЃС‚РєР° СЃС‚Р°СЂРѕРіРѕ Р»РѕРіР° (РµСЃР»Рё РЅСѓР¶РЅРѕ)
 del "%LOGFILE%" >nul 2>&1
 
-REM Активируем виртуальное окружение
+REM РђРєС‚РёРІРёСЂСѓРµРј РІРёСЂС‚СѓР°Р»СЊРЅРѕРµ РѕРєСЂСѓР¶РµРЅРёРµ
 call venv\Scripts\activate.bat >> "%LOGFILE%" 2>&1
 
-REM Запуск FastAPI через uvicorn с выводом в лог
-REM echo Запуск uvicorn... >> "%LOGFILE%"
+REM Р—Р°РїСѓСЃРє FastAPI С‡РµСЂРµР· uvicorn СЃ РІС‹РІРѕРґРѕРј РІ Р»РѕРі
+REM echo Р—Р°РїСѓСЃРє uvicorn... >> "%LOGFILE%"
 REM uvicorn app.main:app --host 127.0.0.1 --port 8000 >> "%LOGFILE%" 2>&1
 
-REM # Установка зависимостей для тестирования
+REM # РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№ РґР»СЏ С‚РµСЃС‚РёСЂРѕРІР°РЅРёСЏ
 REM pip install -r requirements-test.txt
 
-REM # Запуск всех тестов
+REM # Р—Р°РїСѓСЃРє РІСЃРµС… С‚РµСЃС‚РѕРІ
 python run_tests.py >> "%LOGFILE%" 2>&1
 
-REM # Запуск конкретной группы тестов
+REM # Р—Р°РїСѓСЃРє РєРѕРЅРєСЂРµС‚РЅРѕР№ РіСЂСѓРїРїС‹ С‚РµСЃС‚РѕРІ
 REM python run_tests.py test_history_cleaner.py
 REM python run_tests.py test_rag_pipeline.py
 
-REM # Запуск тестов с покрытием
+REM # Р—Р°РїСѓСЃРє С‚РµСЃС‚РѕРІ СЃ РїРѕРєСЂС‹С‚РёРµРј
 REM pytest tests/ --cov=app --cov-report=html
 
-REM # Запуск только быстрых тестов
+REM # Р—Р°РїСѓСЃРє С‚РѕР»СЊРєРѕ Р±С‹СЃС‚СЂС‹С… С‚РµСЃС‚РѕРІ
 REM pytest tests/ -m "not slow"
 
-REM # Запуск в verbose режиме
+REM # Р—Р°РїСѓСЃРє РІ verbose СЂРµР¶РёРјРµ
 REM pytest tests/ -v -s
