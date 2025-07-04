@@ -2,13 +2,8 @@
 
 import pytest
 from unittest.mock import patch, Mock, MagicMock
-from app.rag_pipeline import (
-    build_context,
-    analyze_text,
-    analyze_pages,
-    _prepare_search_queries,
-    _fast_deduplicate_documents
-)
+from app.services.analysis_service import analyze_text, analyze_pages
+from app.services.context_builder import build_context, _prepare_search_queries, _fast_deduplicate_documents
 from langchain_core.documents import Document
 
 

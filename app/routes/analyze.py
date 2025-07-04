@@ -4,8 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
-
-from app.rag_pipeline import analyze_text, analyze_pages, analyze_with_templates
+from app.services.analysis_service import analyze_text, analyze_pages, analyze_with_templates
 from app.service_registry import is_valid_service
 
 logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
