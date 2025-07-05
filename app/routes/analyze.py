@@ -21,6 +21,7 @@ class AnalyzePagesRequest(BaseModel):
     page_ids: List[str]
     prompt_template: Optional[str] = None
     service_code: Optional[str] = None
+    check_templates: bool = False  # НОВЫЙ ПАРАМЕТР
 
 
 class AnalyzeWithTemplatesRequest(BaseModel):
@@ -32,6 +33,7 @@ class AnalyzeWithTemplatesRequest(BaseModel):
 class AnalyzeServicePagesRequest(BaseModel):
     page_ids: List[str]
     prompt_template: Optional[str] = None
+    check_templates: bool = False  # НОВЫЙ ПАРАМЕТР
 
 
 @router.post("/analyze", tags=["Анализ текстовых требований сервиса"])
@@ -54,7 +56,8 @@ async def analyze_service_pages(payload: AnalyzePagesRequest):
         result = analyze_pages(
             page_ids=payload.page_ids,
             prompt_template=payload.prompt_template,
-            service_code=payload.service_code
+            service_code=payload.service_code,
+            check_templates=payload.check_templates  # НОВЫЙ ПАРАМЕТР
         )
         return {"results": result}
     except Exception as e:
@@ -72,7 +75,8 @@ async def analyze_service_pages(code: str, payload: AnalyzeServicePagesRequest):
         result = analyze_pages(
             page_ids=payload.page_ids,
             prompt_template=payload.prompt_template,
-            service_code=code
+            service_code=code,
+            check_templates=payload.check_templates  # НОВЫЙ ПАРАМЕТР
         )
         logger.info("[analyze_service_pages] -> result={%s}", result)
         return {"results": result}

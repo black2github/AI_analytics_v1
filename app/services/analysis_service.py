@@ -34,8 +34,20 @@ def analyze_text(text: str, prompt_template: Optional[str] = None, service_code:
         raise
 
 
-def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, service_code: Optional[str] = None):
-    logger.info("[analyze_pages] <- page_ids=%s, service_code=%s", page_ids, service_code)
+def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
+                  service_code: Optional[str] = None, check_templates: bool = False):
+    """
+    Анализ страниц с опциональной проверкой соответствия шаблонам
+
+    Args:
+        page_ids: Список идентификаторов страниц
+        prompt_template: Шаблон промпта
+        service_code: Код сервиса
+        check_templates: Флаг проверки соответствия шаблонам (по умолчанию False)
+    """
+    logger.info("[analyze_pages] <- page_ids=%s, service_code=%s, check_templates=%s",
+                page_ids, service_code, check_templates)
+
     try:
         if not service_code:
             service_code = resolve_service_code_from_pages_or_user(page_ids)
@@ -79,8 +91,6 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             logging.warning("[analyze_pages] Context too large (%d tokens), limiting analysis", context_tokens)
             return [{"page_id": pid, "analysis": "Анализ невозможен: контекст слишком большой"} for pid in
                     valid_page_ids]
-            # return [{"Страница №": pid, "Анализ": "Анализ невозможен: контекст слишком большой"} for pid in
-            #         valid_page_ids]
 
         # Проверяем общий размер
         full_prompt = PromptTemplate(
@@ -95,8 +105,8 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
         if total_tokens > max_tokens:
             logging.warning("[analyze_pages] Total tokens (%d) exceed limit (%d)", total_tokens, max_tokens)
             return [{"page_id": pid, "analysis": "Анализ невозможен: превышен лимит токенов"} for pid in valid_page_ids]
-            # return [{"Страница №": pid, "Анализ": "Анализ невозможен: превышен лимит токенов"} for pid in valid_page_ids]
 
+        # Основной анализ требований
         chain = build_chain(prompt_template)
         try:
             result = chain.run({"requirement": requirements_text, "context": context})
@@ -107,7 +117,6 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             if not cleaned_result:
                 logger.error("[analyze_pages] No valid JSON found in LLM response")
                 return [{"page_id": pid, "analysis": "Ошибка: LLM не вернул корректный JSON"} for pid in valid_page_ids]
-                # return [{"Страница №": pid, "Анализ": "Ошибка: LLM не вернул корректный JSON"} for pid in valid_page_ids]
 
             try:
                 parsed_result = json.loads(cleaned_result)
@@ -119,14 +128,21 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             if not isinstance(parsed_result, dict):
                 logger.error("[analyze_pages] Result is not a dictionary")
                 return [{"page_id": pid, "analysis": "Ошибка: неожиданный формат ответа LLM"} for pid in valid_page_ids]
-                # return [{"Страница №": pid, "Анализ": "Ошибка: неожиданный формат ответа LLM"} for pid in valid_page_ids]
 
             results = []
             logger.debug("[analyze_pages] results: '%s'", parsed_result)
+
             for page_id in valid_page_ids:
                 analysis = parsed_result.get(page_id, f"Анализ для страницы {page_id} не найден")
-                results.append({"page_id": page_id, "analysis": analysis})
-                # results.append({"Страница №": page_id, "Анализ": analysis})
+                page_result = {"page_id": page_id, "analysis": analysis}
+
+                # НОВОЕ: Добавляем анализ шаблонов если флаг включен
+                if check_templates:
+                    template_analysis = _analyze_page_template_if_needed(page_id, service_code)
+                    if template_analysis:
+                        page_result["template_analysis"] = template_analysis
+
+                results.append(page_result)
 
             logger.info("[analyze_pages] -> Result count: %d", len(results))
             return results
@@ -135,12 +151,93 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None, se
             if "token limit" in str(e).lower():
                 logger.error("[analyze_pages] Token limit exceeded: %s", str(e))
                 return [{"page_id": pid, "analysis": "Ошибка: превышен лимит токенов модели"} for pid in valid_page_ids]
-                # return [{"Страница №": pid, "Анализ": "Ошибка: превышен лимит токенов модели"} for pid in valid_page_ids]
             logger.error("[analyze_pages] Error in LLM chain: %s", str(e))
             raise
     except Exception as e:
         logging.exception("[analyze_pages] Error in analyze_pages")
         raise
+
+
+def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optional[dict]:
+    """
+    Анализирует соответствие шаблону (для случая, если страница еще не была одобрена и сохранена)
+
+    Args:
+        page_id: Идентификатор страницы
+        service_code: Код сервиса
+
+    Returns:
+        Результат анализа шаблона или None
+    """
+    logger.info("[_analyze_page_template_if_needed] <- Checking page_id: %s", page_id)
+
+    try:
+        # Импортируем нужные модули
+        from app.services.document_service import DocumentService
+        from app.services.template_type_analysis import analyze_page_template_type
+
+        # Проверяем наличие одобренных фрагментов
+        document_service = DocumentService()
+        has_fragments = document_service.has_approved_fragments([page_id])
+
+        if has_fragments:
+            logger.info("[_analyze_page_template_if_needed] Page %s has approved fragments, skipping template analysis",
+                        page_id)
+            return None
+
+        logger.info("[_analyze_page_template_if_needed] Page %s has no approved fragments, analyzing template", page_id)
+
+        # Определяем тип шаблона
+        template_type = analyze_page_template_type(page_id)
+
+        if not template_type:
+            logger.info("[_analyze_page_template_if_needed] No template type identified for page %s", page_id)
+            return {
+                "template_type": None,
+                "template_analysis": None,
+                "reason": "Template type not identified"
+            }
+
+        logger.info("[_analyze_page_template_if_needed] Identified template type '%s' for page %s", template_type,
+                    page_id)
+
+        # Проводим анализ соответствия шаблону
+        template_analysis_items = [{
+            "requirement_type": template_type,
+            "page_id": page_id
+        }]
+
+        template_analysis_results = analyze_with_templates(
+            items=template_analysis_items,
+            service_code=service_code
+        )
+
+        if template_analysis_results:
+            analysis_result = template_analysis_results[0]
+            logger.info("[_analyze_page_template_if_needed] -> Template analysis completed for page %s", page_id)
+
+            return {
+                "template_type": template_type,
+                "template_analysis": analysis_result.get("template_analysis"),
+                "legacy_formatting_issues": analysis_result.get("legacy_formatting_issues", []),
+                "analysis_timestamp": analysis_result.get("analysis_timestamp"),
+                "storage_used": analysis_result.get("storage_used")
+            }
+        else:
+            logger.warning("[_analyze_page_template_if_needed] Template analysis failed for page %s", page_id)
+            return {
+                "template_type": template_type,
+                "template_analysis": None,
+                "reason": "Template analysis failed"
+            }
+
+    except Exception as e:
+        logger.error("[_analyze_page_template_if_needed] Error analyzing template for page %s: %s", page_id, str(e))
+        return {
+            "template_type": None,
+            "template_analysis": None,
+            "error": str(e)
+        }
 
 
 def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = None,
