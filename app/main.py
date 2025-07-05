@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.embedding_store import get_embedding_model
 from app.logging_config import setup_logging
-from app.routes import analyze, loader, info, services, health, test_context, logging_control, jira
+from app.routes import analyze, loader, info, services, health, test_context, logging_control, jira, template_analysis
 
 # Инициализация логирования с уровнем INFO
 setup_logging()
@@ -37,6 +37,7 @@ app.include_router(info.router)
 app.include_router(test_context.router)
 app.include_router(logging_control.router)
 app.include_router(jira.router)
+app.include_router(template_analysis.router)
 
 @app.get("/")
 async def root():
