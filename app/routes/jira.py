@@ -1,4 +1,5 @@
-# app/routes/jira.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/routes/jira.py - ИСПРАВЛЕННАЯ ВЕРСИЯ с условным созданием объектов
+
 """
 Маршруты для работы с Jira API.
 """
@@ -18,19 +19,18 @@ logger = logging.getLogger(__name__)
 class PageAnalysisResult(BaseModel):
     """Модель результата анализа одной страницы."""
     page_id: str
-    analysis: Union[Dict[str, Any], str]  # ИСПРАВЛЕНИЕ: Может быть и словарем, и строкой
+    analysis: Union[Dict[str, Any], str]
+    template_analysis: Optional[Dict[str, Any]] = None
 
     @field_validator('analysis')
     @classmethod
     def validate_analysis(cls, v):
         """Валидатор для поля analysis - приводим к нужному формату"""
         if isinstance(v, str):
-            # Если строка - оборачиваем в словарь для единообразия
             return {"error": v}
         elif isinstance(v, dict):
             return v
         else:
-            # Неожиданный тип - преобразуем в строку и оборачиваем
             return {"error": str(v)}
 
 
@@ -39,6 +39,7 @@ class JiraTaskRequest(BaseModel):
     jira_task_ids: List[str]
     prompt_template: Optional[str] = None
     service_code: Optional[str] = None
+    check_templates: bool = False
 
 
 class JiraTaskResponse(BaseModel):
@@ -49,40 +50,15 @@ class JiraTaskResponse(BaseModel):
     total_pages_found: int
     analysis_results: Optional[List[PageAnalysisResult]] = None
     error: Optional[str] = None
+    templates_analyzed: int = 0
 
 
-@router.post("/analyze-jira-task", response_model=JiraTaskResponse)
+@router.post("/analyze-jira-task", response_model=JiraTaskResponse, response_model_exclude_none=True)
 async def analyze_jira_task(request: JiraTaskRequest):
     """
-    Анализирует задачи Jira: извлекает идентификаторы страниц Confluence и проводит их анализ.
-
-    Ожидает JSON с массивом jira_task_ids и опциональными параметрами:
-    {
-        "jira_task_ids": ["GBO-123", "GBO-456"],
-        "prompt_template": "optional_prompt_template",
-        "service_code": "optional_service_code"
-    }
-
-    Возвращает:
-    {
-        "success": true,
-        "jira_task_ids": ["GBO-123", "GBO-456"],
-        "confluence_page_ids": ["123456", "789012"],
-        "total_pages_found": 2,
-        "analysis_results": [
-            {
-                "page_id": "123456",
-                "analysis": {
-                    "Общие требования к ЭФ": {
-                        "Полнота и непротиворечивость": "...",
-                        "Корректность алгоритмов и процедур": "..."
-                    }
-                }
-            }
-        ]
-    }
+    Анализирует задачи Jira с опциональной проверкой соответствия шаблонам
     """
-    logger.info("[analyze_jira_task] <- Request received")
+    logger.info("[analyze_jira_task] <- Request received with check_templates=%s", request.check_templates)
 
     try:
         jira_task_ids = request.jira_task_ids
@@ -114,45 +90,68 @@ async def analyze_jira_task(request: JiraTaskRequest):
             )
 
         # Шаг 2: Проводим анализ найденных страниц
-        logger.info("[analyze_jira_task] Starting analysis of %d pages", len(page_ids))
+        logger.info("[analyze_jira_task] Starting analysis of %d pages with check_templates=%s",
+                    len(page_ids), request.check_templates)
 
         analysis_results = analyze_pages(
             page_ids=page_ids,
             prompt_template=request.prompt_template,
-            service_code=request.service_code
+            service_code=request.service_code,
+            check_templates=request.check_templates
         )
 
         logger.info("[analyze_jira_task] -> Analysis completed successfully, got %d results", len(analysis_results))
 
-        # ИСПРАВЛЕНИЕ: Безопасное преобразование результатов
+        # ИСПРАВЛЕНО: Создаем объекты с условными параметрами
         parsed_results = []
+        templates_analyzed = 0
+
         for result in analysis_results:
             try:
-                # result имеет структуру: {"page_id": "123", "analysis": {...} или "строка"}
-                parsed_result = PageAnalysisResult(
-                    page_id=result["page_id"],
-                    analysis=result["analysis"]  # Валидатор обработает тип
-                )
+                template_analysis = result.get("template_analysis")
+
+                # Подсчитываем количество проанализированных шаблонов
+                if template_analysis and template_analysis.get("template_type"):
+                    templates_analyzed += 1
+
+                # ИСПРАВЛЕНИЕ: Используем ** для условной передачи параметров
+                result_params = {
+                    "page_id": result["page_id"],
+                    "analysis": result["analysis"]
+                }
+
+                # Добавляем template_analysis только если он существует и не пустой
+                if template_analysis:
+                    result_params["template_analysis"] = template_analysis
+
+                parsed_result = PageAnalysisResult(**result_params)
                 parsed_results.append(parsed_result)
-                logger.debug("[analyze_jira_task] Successfully processed result for page_id=%s", result["page_id"])
+
+                logger.debug(
+                    "[analyze_jira_task] Successfully processed result for page_id=%s, has_template_analysis=%s",
+                    result["page_id"], template_analysis is not None)
             except Exception as e:
                 logger.error("[analyze_jira_task] Error processing result for page_id=%s: %s",
-                           result.get("page_id", "unknown"), str(e))
-                # Создаем запасной результат
+                             result.get("page_id", "unknown"), str(e))
+                # Создаем запасной результат без template_analysis
                 parsed_results.append(PageAnalysisResult(
                     page_id=result.get("page_id", "unknown"),
                     analysis={"error": f"Processing error: {str(e)}"}
                 ))
 
-        logger.debug("[analyze_jira_task] Successfully parsed %d analysis results", len(parsed_results))
+        logger.debug("[analyze_jira_task] Successfully parsed %d analysis results, %d templates analyzed",
+                     len(parsed_results), templates_analyzed)
 
-        return JiraTaskResponse(
+        response = JiraTaskResponse(
             success=True,
             jira_task_ids=jira_task_ids,
             confluence_page_ids=page_ids,
             total_pages_found=len(page_ids),
-            analysis_results=parsed_results
+            analysis_results=parsed_results,
+            templates_analyzed=templates_analyzed
         )
+
+        return response
 
     except Exception as e:
         logger.error("[analyze_jira_task] Error: %s", str(e))
@@ -174,5 +173,10 @@ async def health_check():
         "endpoints": [
             "POST /analyze-jira-task",
             "GET /jira/health"
+        ],
+        "features": [
+            "Confluence page extraction",
+            "Requirements analysis",
+            "Template structure analysis"
         ]
     }
