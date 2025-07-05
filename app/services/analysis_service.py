@@ -200,6 +200,7 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
                 "[analyze_with_templates] Sending to LLM: template=%d chars, content=%d chars, context=%d chars",
                 len(template_content), len(content), len(context))
 
+            # Отправляем запрос проверку и формата и содержания в LLM
             llm_result = template_chain.run({
                 "requirement": content,
                 "template": template_content,
