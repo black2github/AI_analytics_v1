@@ -1,4 +1,4 @@
-# app/routes/template_analysis.py
+# app/routes/template_analysis.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -14,9 +14,15 @@ class AnalyzeTypesRequest(BaseModel):
     page_ids: List[str]
 
 
+class PageTemplateResult(BaseModel):
+    """Результат анализа одной страницы"""
+    page_id: str
+    template_name: Optional[str]
+
+
 class AnalyzeTypesResponse(BaseModel):
-    page_ids: List[str]
-    template_types: List[Optional[str]]
+    """Ответ с результатами анализа типов шаблонов"""
+    results: List[PageTemplateResult]
     total_pages: int
     identified_types: int
 
@@ -30,7 +36,7 @@ async def analyze_template_types(request: AnalyzeTypesRequest):
         page_ids: Список идентификаторов страниц
 
     Returns:
-        Список типов шаблонов для каждой страницы (или null если не определен)
+        Список пар page_id - template_name для каждой страницы
     """
     logger.info("[analyze_template_types] <- Analyzing %d pages", len(request.page_ids))
 
@@ -38,24 +44,39 @@ async def analyze_template_types(request: AnalyzeTypesRequest):
         # Анализируем типы шаблонов
         template_types = analyze_pages_template_types(request.page_ids)
 
+        # Формируем результат в виде пар page_id - template_name
+        results = []
+        for page_id, template_type in zip(request.page_ids, template_types):
+            results.append(PageTemplateResult(
+                page_id=page_id,
+                template_name=template_type
+            ))
+
         # Подсчитываем статистику
-        identified_count = sum(1 for t in template_types if t is not None)
+        identified_count = sum(1 for result in results if result.template_name is not None)
 
         logger.info("[analyze_template_types] -> Identified %d/%d template types",
                     identified_count, len(request.page_ids))
 
         return AnalyzeTypesResponse(
-            page_ids=request.page_ids,
-            template_types=template_types,
+            results=results,
             total_pages=len(request.page_ids),
             identified_types=identified_count
         )
 
     except Exception as e:
         logger.error("[analyze_template_types] Error: %s", str(e))
+
+        # В случае ошибки возвращаем пустые результаты
+        error_results = []
+        for page_id in request.page_ids:
+            error_results.append(PageTemplateResult(
+                page_id=page_id,
+                template_name=None
+            ))
+
         return AnalyzeTypesResponse(
-            page_ids=request.page_ids,
-            template_types=[None] * len(request.page_ids),
+            results=error_results,
             total_pages=len(request.page_ids),
             identified_types=0
         )
