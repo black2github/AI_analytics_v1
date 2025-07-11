@@ -31,46 +31,62 @@ class TemplateTypeAnalyzer:
             logger.error("[TemplateTypeAnalyzer] Failed to load features.json: %s", str(e))
             return {}
 
-    def analyze_page_type(self, page_id: str) -> Optional[str]:
+    def analyze_content_type(self, page_title: str, page_html: str) -> Optional[str]:
         """
-        Определяет тип шаблона для одной страницы Confluence
-
+        Определяет тип шаблона для одной страницы Confluence.
         Args:
-            page_id: Идентификатор страницы
-
+            page_html: HTML содержимое страницы
+            page_title: Наименование страницы
         Returns:
             Название типа шаблона или None если не определен
         """
-        logger.info("[analyze_page_type] Analyzing page_id: %s", page_id)
-
-        if not self.features:
-            logger.warning("[analyze_page_type] No features loaded, returning None")
-            return None
-
-        # Получаем данные страницы
-        page_title = get_page_title_by_id(page_id)
-        page_html = get_page_content_by_id(page_id, clean_html=False)
+        logger.debug("[analyze_content_type] <- page_title: %s", page_title)
 
         if not page_title or not page_html:
-            logger.warning("[analyze_page_type] Failed to load page data for %s", page_id)
+            logger.warning("[analyze_content_type] Page title or content is None")
             return None
 
         # Получаем текстовое содержимое страницы
         page_content = filter_all_fragments(page_html)
 
-        logger.debug("[analyze_page_type] Page title: '%s'", page_title)
-        logger.debug("[analyze_page_type] Page content length: %d chars", len(page_content))
+        logger.debug("[analyze_content_type] Page title: '%s'", page_title)
+        logger.debug("[analyze_content_type] Page content length: %d chars", len(page_content))
 
         # Проверяем каждый тип шаблона
         for template_type, template_config in self.features.items():
-            logger.debug("[analyze_page_type] Checking template type: %s", template_type)
+            logger.debug("[analyze_content_type] Checking template type: %s", template_type)
 
             if self._check_template_match(page_title, page_content, template_config):
-                logger.info("[analyze_page_type] -> Found match: %s", template_type)
+                logger.info("[analyze_content_type] -> Found match: %s", template_type)
                 return template_type
 
-        logger.info("[analyze_page_type] -> No template match found")
+        logger.info("[analyze_content_type] -> No template match found")
         return None
+
+    def analyze_page_type(self, page_id: str) -> Optional[str]:
+        """
+        Определяет тип шаблона для одной страницы Confluence.
+        Args:
+            page_id: Идентификатор страницы
+        Returns:
+            Название типа шаблона или None если не определен
+        """
+        logger.info("[analyze_page_type] <- page_id: %s", page_id)
+
+        if not self.features:
+            logger.warning("[analyze_page_type] No features loaded, returning None")
+            return None
+
+        # Получаем данные страницы (заголовок и содержимое)
+        page_title = get_page_title_by_id(page_id)
+        page_html = get_page_content_by_id(page_id, clean_html=False)
+
+        template_type = self.analyze_content_type(page_title, page_html)
+        if template_type:
+            logger.info("[analyze_page_type] -> Found match: %s", template_type)
+        else:
+            logger.info("[analyze_page_type] -> No template match found")
+        return template_type
 
     def analyze_pages_types(self, page_ids: List[str]) -> List[Optional[str]]:
         """
@@ -82,7 +98,7 @@ class TemplateTypeAnalyzer:
         Returns:
             Список типов шаблонов (или None для каждой страницы)
         """
-        logger.info("[analyze_pages_types] Analyzing %d pages", len(page_ids))
+        logger.info("[analyze_pages_types] <- pages = '%s'", page_ids)
 
         results = []
         for page_id in page_ids:
@@ -108,6 +124,7 @@ class TemplateTypeAnalyzer:
         Returns:
             True если страница соответствует шаблону
         """
+        logger.debug("[check_template_match] <- page_title: '%s'", page_title)
         # 1. Проверка названия страницы
         if not self._check_title_match(page_title, template_config.get("title")):
             logger.debug("[_check_template_match] Title check failed")
@@ -222,6 +239,11 @@ class TemplateTypeAnalyzer:
 _analyzer = TemplateTypeAnalyzer()
 
 
+def analyze_content_template_type(page_title: str, page_html) -> Optional[str]:
+    """Функция-обертка для анализа одной страницы"""
+    return _analyzer.analyze_content_type(page_title, page_html)
+
+
 def analyze_page_template_type(page_id: str) -> Optional[str]:
     """Функция-обертка для анализа одной страницы"""
     return _analyzer.analyze_page_type(page_id)
@@ -230,3 +252,45 @@ def analyze_page_template_type(page_id: str) -> Optional[str]:
 def analyze_pages_template_types(page_ids: List[str]) -> List[Optional[str]]:
     """Функция-обертка для анализа нескольких страниц"""
     return _analyzer.analyze_pages_types(page_ids)
+
+
+def perform_legacy_structure_check(template_html: str, content: str) -> List[str]:
+    """
+    Выполняет быструю структурную проверку (legacy код для обратной совместимости).
+    Ожидает на вход шаблон и проверяемую страницу в формате HTML.
+    Проверяет:
+        - совпадение заголовков до 3-го уровня включительно;
+        - совпадение числа таблиц на странице и шаблоне.
+    """
+    try:
+        logger.debug("[_perform_legacy_structure_check] <- Legacy structure check")
+        from markdownify import markdownify
+        from bs4 import BeautifulSoup
+
+        template_md = markdownify(template_html, heading_style="ATX")
+        content_md = markdownify(content, heading_style="ATX")
+        template_soup = BeautifulSoup(template_md, 'html.parser')
+        content_soup = BeautifulSoup(content_md, 'html.parser')
+
+        formatting_issues = []
+
+        # Проверка заголовков
+        template_headers = [h.get_text().strip() for h in template_soup.find_all(['h1', 'h2', 'h3'])]
+        content_headers = [h.get_text().strip() for h in content_soup.find_all(['h1', 'h2', 'h3'])]
+        if set(template_headers) != set(content_headers):
+            formatting_issues.append(
+                f"Несоответствие заголовков: ожидаются {template_headers}, найдены {content_headers}")
+
+        # Проверка таблиц
+        template_tables = template_soup.find_all('table')
+        content_tables = content_soup.find_all('table')
+        if len(template_tables) != len(content_tables):
+            formatting_issues.append(
+                f"Несоответствие количества таблиц: ожидается {len(template_tables)}, найдено {len(content_tables)}")
+
+        logger.debug("[_perform_legacy_structure_check] -> formatting issues = '%s'", formatting_issues)
+        return formatting_issues
+
+    except Exception as e:
+        logger.warning("[_perform_legacy_structure_check] Error in legacy check: %s", str(e))
+        return [f"Ошибка структурной проверки: {str(e)}"]

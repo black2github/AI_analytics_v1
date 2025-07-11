@@ -82,6 +82,10 @@ def prepare_unified_documents(
         # Добавляем requirement_type для шаблонов
         if requirement_type:
             metadata["requirement_type"] = requirement_type
+        # else:
+        #     # Определяет тип требования для страниц, если он не определен аргументом
+        #     requirement_type = page.get("requirement_type")
+        #     metadata["requirement_type"] = requirement_type
 
         logger.debug("[prepare_unified_documents] Creating doc: page_id=%s, title='%s', is_platform=%s",
                      page["id"], page["title"], is_platform)

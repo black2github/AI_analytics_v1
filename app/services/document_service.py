@@ -185,9 +185,9 @@ class DocumentService:
                     {"doc_type": {"$eq": "requirement"}}
                 ]
             })
-            logger.debug("Deleted existing requirement fragments for page_ids: %s", page_ids_to_delete)
+            logger.debug("[_delete_existing_fragments] Deleted existing requirement fragments for page_ids: %s", page_ids_to_delete)
         except Exception as e:
-            logger.warning("Could not delete existing vectors: %s", e)
+            logger.warning("[_delete_existing_fragments] Could not delete existing vectors: %s", e)
 
     def has_approved_fragments(self, page_ids: List[str]) -> bool:
         """
@@ -202,7 +202,7 @@ class DocumentService:
         if not page_ids:
             return False
 
-        logger.info("[DocumentService.has_approved_fragments] <- Checking %d page_ids", len(page_ids))
+        logger.info("[has_approved_fragments] <- Checking %d page_ids", len(page_ids))
 
         try:
             embeddings_model = get_embeddings_model()
@@ -222,11 +222,11 @@ class DocumentService:
             found_count = len(results.get('ids', []))
             has_fragments = found_count > 0
 
-            logger.info("[DocumentService.has_approved_fragments] -> Found %d fragments, result: %s",
+            logger.info("[has_approved_fragments] -> Found %d fragments, result: %s",
                         found_count, has_fragments)
 
             return has_fragments
 
         except Exception as e:
-            logger.error("[DocumentService.has_approved_fragments] Error: %s", str(e))
+            logger.error("[has_approved_fragments] Error: %s", str(e))
             return False

@@ -8,7 +8,8 @@ from typing import Optional, List
 from langchain_core.prompts import PromptTemplate
 from app.config import PAGE_ANALYSIS_PROMPT_FILE, UNIFIED_STORAGE_NAME
 from app.confluence_loader import get_page_content_by_id
-from app.rag_pipeline import logger, build_chain, count_tokens, build_template_analysis_chain, _perform_legacy_structure_check
+from app.rag_pipeline import logger, build_chain, count_tokens, build_template_analysis_chain
+from app.services.template_type_analysis import perform_legacy_structure_check
 from app.service_registry import resolve_service_code_by_user, resolve_service_code_from_pages_or_user
 from app.services.context_builder import build_context
 from app.template_registry import get_template_by_type
@@ -61,8 +62,11 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
         template = prompt_template or open(PAGE_ANALYSIS_PROMPT_FILE, "r", encoding="utf-8").read().strip()
         template_tokens = count_tokens(template)
 
-        # Собираем страницы до превышения лимита токенов
+        #
+        # Формируем состав анализируемых требований из входных страниц (для {requirements})
+        #
         for page_id in page_ids:
+            # Собираем страницы очищенного текста (без учета цвета) до превышения лимита токенов.
             content = get_page_content_by_id(page_id, clean_html=True)
             if content:
                 req_text = f"Page ID: {page_id}\n{content}"
@@ -82,8 +86,11 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
         requirements_text = "\n\n".join(
             [f"Page ID: {req['page_id']}\n{req['content']}" for req in requirements]
         )
+        logger.debug("[analyze_pages] Resolved requirements: '%s'", requirements_text)
 
-        # Используем новую функцию построения контекста
+        #
+        # Формируем контекст ((для {context})
+        #
         context = build_context(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
 
         context_tokens = count_tokens(context)
@@ -92,7 +99,9 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
             return [{"page_id": pid, "analysis": "Анализ невозможен: контекст слишком большой"} for pid in
                     valid_page_ids]
 
-        # Проверяем общий размер
+        #
+        # Проверяем общий размер в токенах (перед отправкой в LLM)
+        #
         full_prompt = PromptTemplate(
             input_variables=["requirement", "context"],
             template=template
@@ -106,7 +115,9 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
             logging.warning("[analyze_pages] Total tokens (%d) exceed limit (%d)", total_tokens, max_tokens)
             return [{"page_id": pid, "analysis": "Анализ невозможен: превышен лимит токенов"} for pid in valid_page_ids]
 
+        #
         # Основной анализ требований
+        #
         chain = build_chain(prompt_template)
         try:
             result = chain.run({"requirement": requirements_text, "context": context})
@@ -201,12 +212,12 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
         logger.info("[_analyze_page_template_if_needed] Identified template type '%s' for page %s", template_type,
                     page_id)
 
-        # Проводим анализ соответствия шаблону
         template_analysis_items = [{
             "requirement_type": template_type,
             "page_id": page_id
         }]
 
+        # Проводим анализ соответствия шаблону
         template_analysis_results = analyze_with_templates(
             items=template_analysis_items,
             service_code=service_code
@@ -262,42 +273,47 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
 
         logger.info("[analyze_with_templates] Processing page_id: %s, type: %s", page_id, requirement_type)
 
-        # Получаем контент страницы и шаблон
+        # Получаем текстовое содержимое страницы и шаблон требований
         content = get_page_content_by_id(page_id, clean_html=True)
-        template_html = get_template_by_type(requirement_type)
+        template_txt = get_template_by_type(requirement_type)
 
-        if not content or not template_html:
+        if not content or not template_txt:
             logger.warning("[analyze_with_templates] Missing content or template for page %s", page_id)
             results.append({
                 "page_id": page_id,
                 "requirement_type": requirement_type,
                 "template_analysis": {
                     "error": "Отсутствует содержимое страницы или шаблон",
-                    "template_available": bool(template_html),
+                    "template_available": bool(template_txt),
                     "content_available": bool(content)
                 },
                 "legacy_formatting_issues": []
             })
             continue
 
-        template_content = template_html
+        template_content = template_txt
 
         # Строим контекст с использованием единого хранилища
-        context = build_context(
-            service_code=service_code,
-            requirements_text=content,
-            exclude_page_ids=[page_id]
-        )
+        # Зачем строить контекст, если речь идет о структуре, а не анализе требований? Что если сделать пустым?
+        # Эксперимент показал, что разницы НЕТ! То есть если добавлять контекст, то какой-то особый.
+
+        # context = build_context(
+        #     service_code=service_code,
+        #     requirements_text=content,
+        #     exclude_page_ids=[page_id]
+        # )
+        context = ""
 
         # Быстрая структурная проверка (legacy поддержка)
-        legacy_formatting_issues = _perform_legacy_structure_check(template_html, content)
+        # TODO Удалить? Судя по коду должны использоваться HTML данные, а не текстовые.
+        legacy_formatting_issues = perform_legacy_structure_check(template_txt, content)
 
         try:
             logger.debug(
                 "[analyze_with_templates] Sending to LLM: template=%d chars, content=%d chars, context=%d chars",
                 len(template_content), len(content), len(context))
 
-            # Отправляем запрос проверку и формата и содержания в LLM
+            # Отправляем запрос проверки и формата и содержания в LLM
             llm_result = template_chain.run({
                 "requirement": content,
                 "template": template_content,

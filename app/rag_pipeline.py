@@ -128,40 +128,6 @@ def count_tokens(text: str) -> int:
             return len(text.split())
 
 
-def _perform_legacy_structure_check(template_html: str, content: str) -> List[str]:
-    """Выполняет быструю структурную проверку (legacy код для обратной совместимости)"""
-    try:
-        from markdownify import markdownify
-        from bs4 import BeautifulSoup
-
-        template_md = markdownify(template_html, heading_style="ATX")
-        content_md = markdownify(content, heading_style="ATX")
-        template_soup = BeautifulSoup(template_md, 'html.parser')
-        content_soup = BeautifulSoup(content_md, 'html.parser')
-
-        formatting_issues = []
-
-        # Проверка заголовков
-        template_headers = [h.get_text().strip() for h in template_soup.find_all(['h1', 'h2', 'h3'])]
-        content_headers = [h.get_text().strip() for h in content_soup.find_all(['h1', 'h2', 'h3'])]
-        if set(template_headers) != set(content_headers):
-            formatting_issues.append(
-                f"Несоответствие заголовков: ожидаются {template_headers}, найдены {content_headers}")
-
-        # Проверка таблиц
-        template_tables = template_soup.find_all('table')
-        content_tables = content_soup.find_all('table')
-        if len(template_tables) != len(content_tables):
-            formatting_issues.append(
-                f"Несоответствие количества таблиц: ожидается {len(template_tables)}, найдено {len(content_tables)}")
-
-        return formatting_issues
-
-    except Exception as e:
-        logger.warning("[_perform_legacy_structure_check] Error in legacy check: %s", str(e))
-        return [f"Ошибка структурной проверки: {str(e)}"]
-
-
 def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMChain:
     """Создает цепочку LangChain для анализа соответствия шаблону."""
     logger.info("[build_template_analysis_chain] <- custom_prompt provided: %s", bool(custom_prompt))

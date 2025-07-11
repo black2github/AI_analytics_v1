@@ -8,6 +8,7 @@ from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
 from app.filter_all_fragments import filter_all_fragments
 from app.filter_approved_fragments import filter_approved_fragments
 from app.history_cleaner import remove_history_sections
+# from app.services.template_type_analysis import analyze_page_template_type
 
 if CONFLUENCE_BASE_URL is None:
     raise ValueError("Переменная окружения CONFLUENCE_BASE_URL не задана")
@@ -28,10 +29,7 @@ except ImportError:
 
 def extract_approved_fragments(html: str) -> str:
     """
-    Извлекает только одобренные (чёрные) фрагменты текста, включая ссылки и таблицы,
-    но только если они находятся внутри одобренных блоков.
-    Фильтрация идёт по стилю родительского блока, не по вложенным тегам.
-    Если родитель — цветной (нечёрный), всё внутри удаляется.
+    Извлекает только одобренные (чёрные) фрагменты текста, включая ссылки и таблицы.
     """
     logger.debug("[extract_approved_fragments] <- html={%s}", html)
     return filter_approved_fragments(html)
@@ -40,7 +38,16 @@ def extract_approved_fragments(html: str) -> str:
 from tenacity import retry, stop_after_attempt, wait_exponential
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[str]:
-    """Получает содержимое страницы Confluence по её ID."""
+    """
+    Получает содержимое страницы Confluence по её ID.
+
+        Args:
+        page_id: ID страницы
+        clean_html: Требуется текстовое представление (True) или HTML (False)
+
+    Returns:
+        Содержимое страницы в текстовом или HTML виде.
+    """
     logger.info("[get_page_content_by_id] <- page_id=%s, clean_html=%s", page_id, clean_html)
     try:
         page = confluence.get_page_by_id(page_id, expand='body.storage')
@@ -78,22 +85,37 @@ def get_page_title_by_id(page_id: str) -> Optional[str]:
 
 def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
     """
-    Загрузка страниц по идентификаторам и разбиение на идентификатор, заголовок, содержимое и подтвержденное содержимое
-    (текст подтвержденных/черных требований).
-    :param page_ids: список идентификаторов страниц для загрузки.
-    :return:
+    Загрузка страниц из Confluence по идентификаторам и разбиение на:
+    идентификатор, заголовок, содержимое, подтвержденное содержимое (текст подтвержденных/черных требований) и тип требования.
+
+    Args:
+        page_ids: список идентификаторов страниц для загрузки.
+    Returns:
+        страницы (словари) с id, title, content, approved_content, requirement_type.
     """
     logger.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
     pages = []
     for page_id in page_ids:
         title = get_page_title_by_id(page_id)
         raw_html = get_page_content_by_id(page_id, clean_html=False)
+        # TODO похоже далее должно быть примерно так, как описано в следующей строке
+        # full_md = filter_all_fragments(raw_html) if raw_html else None
         full_md = markdownify.markdownify(raw_html, heading_style="ATX") if raw_html else None
         approved_md = extract_approved_fragments(raw_html) if raw_html else None
+        # TODO добавить определение типа требований, но без циклической зависимости
+        # requirement_type = analyze_content_template_type(title, raw_html)
 
         if not (title and full_md and approved_md):
             logging.warning("Пропущена страница {%s} из-за ошибок загрузки.", page_id)
             continue
+        # TODO Требуется добавить тип требования, чтобы потом добавлять заголовок в начало страницы.
+        # Например, если это описание сущности, то сразу идет описание и при слиянии страниц в один контекст не ясно,
+        # чей это фрагмент. Поэтому добавляем условный заголовок (ниже).
+        # ---
+        # title: Название статьи
+        # ---
+        # approved_md = f"---\ntitle: {title}\n---\n" + approved_md
+        # full_md = f"---\ntitle: {title}\n---\n" + full_md
 
         pages.append({
             "id": page_id,
