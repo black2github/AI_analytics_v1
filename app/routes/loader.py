@@ -139,3 +139,17 @@ async def debug_collections():
 def remove_service_fragments(page_ids: List[str]) -> int:
     """DEPRECATED: Используйте DocumentService.remove_page_fragments"""
     return document_service.remove_page_fragments(page_ids)
+
+from app.page_cache import clear_page_cache, get_cache_info
+
+@router.get("/cache_info", tags=["Кеширование"])
+async def cache_info():
+    """Информация о состоянии кеша страниц"""
+    return get_cache_info()
+
+
+@router.post("/clear_cache", tags=["Кеширование"])
+async def clear_cache():
+    """Очистка кеша страниц"""
+    clear_page_cache()
+    return {"message": "Cache cleared successfully"}
