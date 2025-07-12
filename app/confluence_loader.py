@@ -3,12 +3,11 @@
 import logging
 from typing import List, Dict, Optional
 from atlassian import Confluence
-import markdownify
+# import markdownify
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
-from app.filter_all_fragments import filter_all_fragments
+# from app.filter_all_fragments import filter_all_fragments
 from app.filter_approved_fragments import filter_approved_fragments
-from app.history_cleaner import remove_history_sections
-# from app.services.template_type_analysis import analyze_page_template_type
+# from app.history_cleaner import remove_history_sections
 
 if CONFLUENCE_BASE_URL is None:
     raise ValueError("Переменная окружения CONFLUENCE_BASE_URL не задана")
@@ -39,55 +38,51 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[str]:
     """
+    ОПТИМИЗИРОВАНО: Использует кеширование.
     Получает содержимое страницы Confluence по её ID.
-
-        Args:
-        page_id: ID страницы
-        clean_html: Требуется текстовое представление (True) или HTML (False)
-
-    Returns:
-        Содержимое страницы в текстовом или HTML виде.
     """
     logger.info("[get_page_content_by_id] <- page_id=%s, clean_html=%s", page_id, clean_html)
-    try:
-        page = confluence.get_page_by_id(page_id, expand='body.storage')
-        content = page.get('body', {}).get('storage', {}).get('value', '')
-        if not content:
-            logging.warning("[get_page_content_by_id] No content found for page_id=%s", page_id)
-            return None
 
-        # # ДОБАВЛЯЕМ ОЧИСТКУ ИСТОРИИ ИЗМЕНЕНИЙ
-        # content = remove_history_sections(content)
-        # logger.debug("[get_page_content_by_id] Removed history sections")
+    # ДОБАВЛЯЕМ ИМПОРТ кешированной функции
+    from app.page_cache import get_page_data_cached
 
-        if clean_html:
-            logger.debug("[get_page_content_by_id] clean_html started")
-            content = filter_all_fragments(content)
-            logger.debug("[get_page_content_by_id] Extracted text: %s", content[:200] + "...")
-
-        logger.info("[get_page_content_by_id] -> Content length %d characters", len(content))
-        return content
-    except Exception as e:
-        logging.error("[get_page_content_by_id] Error fetching page_id=%s: %s", page_id, str(e))
+    page_data = get_page_data_cached(page_id)
+    if not page_data:
         return None
+
+    if clean_html:
+        content = page_data['full_content']
+    else:
+        content = page_data['raw_html']
+
+    logger.info("[get_page_content_by_id] -> Content length %d characters", len(content))
+    return content
 
 
 def get_page_title_by_id(page_id: str) -> Optional[str]:
+    """
+    ОПТИМИЗИРОВАНО: Использует кеширование.
+
+    Получает заголовок страницы по ID.
+    """
     logger.debug("[get_page_title_by_id] <- page_id=%s", page_id)
-    try:
-        result = confluence.get_page_by_id(page_id, expand='title')
-        logger.debug("[get_page_title_by_id] -> Result: %s", result)
-        return result.get("title", "")
-    except Exception as e:
-        logging.warning("Ошибка при получении содержимого страницы {%s}: {%s}", page_id, e)
+
+    # ДОБАВЛЯЕМ ИМПОРТ кешированной функции
+    from app.page_cache import get_page_data_cached
+
+    page_data = get_page_data_cached(page_id)
+    if not page_data:
         return None
+
+    logger.debug("[get_page_title_by_id] -> Result: %s", page_data['title'])
+    return page_data['title']
 
 
 def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
     """
     Загрузка страниц из Confluence по идентификаторам и разбиение на:
     идентификатор, заголовок, содержимое, подтвержденное содержимое и тип требования.
-
+    ОПТИМИЗИРОВАНО: Использует кеширование для быстрой загрузки страниц.
     Args:
         page_ids: список идентификаторов страниц для загрузки.
     Returns:
@@ -95,29 +90,29 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
     """
     logger.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
 
-    # ДОБАВЛЯЕМ ИМПОРТ
-    from app.services.template_type_analysis import analyze_content_template_type
+    # ДОБАВЛЯЕМ ИМПОРТ кешированной функции
+    from app.page_cache import get_page_data_cached
 
     pages = []
     for page_id in page_ids:
-        title = get_page_title_by_id(page_id)
-        raw_html = get_page_content_by_id(page_id, clean_html=False)
-        full_md = markdownify.markdownify(raw_html, heading_style="ATX") if raw_html else None
-        approved_md = extract_approved_fragments(raw_html) if raw_html else None
+        # ЗАМЕНЯЕМ множественные запросы на один кешированный
+        page_data = get_page_data_cached(page_id)
 
-        # ДОБАВЛЯЕМ ОПРЕДЕЛЕНИЕ ТИПА ТРЕБОВАНИЯ
-        requirement_type = analyze_content_template_type(title, raw_html) if (title and raw_html) else None
-
-        if not (title and full_md and approved_md):
+        if not page_data:
             logging.warning("Пропущена страница {%s} из-за ошибок загрузки.", page_id)
             continue
 
+        # Проверяем наличие обязательных данных
+        if not (page_data['title'] and page_data['full_markdown'] and page_data['approved_content']):
+            logging.warning("Пропущена страница {%s} из-за отсутствия данных.", page_id)
+            continue
+
         pages.append({
-            "id": page_id,
-            "title": title,
-            "content": full_md,
-            "approved_content": approved_md,
-            "requirement_type": requirement_type
+            "id": page_data['id'],
+            "title": page_data['title'],
+            "content": page_data['full_markdown'],
+            "approved_content": page_data['approved_content'],
+            "requirement_type": page_data['requirement_type']
         })
 
     logger.info("[load_pages_by_ids] -> Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
