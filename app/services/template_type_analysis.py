@@ -254,6 +254,33 @@ def analyze_pages_template_types(page_ids: List[str]) -> List[Optional[str]]:
     return _analyzer.analyze_pages_types(page_ids)
 
 
+def get_template_name_by_type(template_type: str) -> str:
+    """
+    Получает человекочитаемое название типа шаблона по его коду.
+
+    Args:
+        template_type: Код типа шаблона (например, "dataModel")
+
+    Returns:
+        Название типа шаблона (например, "Модель данных") или сам код если не найден
+    """
+    if not template_type:
+        return "Неизвестный тип"
+
+    # Используем уже существующий анализатор
+    global _analyzer
+    if not _analyzer.features:
+        logger.warning("[get_template_name_by_type] Features not loaded")
+        return template_type
+
+    template_config = _analyzer.features.get(template_type)
+    if template_config and "name" in template_config:
+        return template_config["name"]
+
+    logger.debug("[get_template_name_by_type] No name found for type '%s'", template_type)
+    return template_type
+
+
 def perform_legacy_structure_check(template_html: str, content: str) -> List[str]:
     """
     Выполняет быструю структурную проверку (legacy код для обратной совместимости).

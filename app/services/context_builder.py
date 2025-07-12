@@ -1,6 +1,7 @@
 # app/services/context_builder.py
 
 from typing import Optional, List
+from langchain_core.documents import Document  # ДОБАВЛЯЕМ ИМПОРТ
 from app.config import UNIFIED_STORAGE_NAME
 from app.confluence_loader import get_page_content_by_id
 from app.embedding_store import get_vectorstore
@@ -10,11 +11,13 @@ from app.rag_pipeline import logger, _extract_links_from_unconfirmed_fragments, 
 from app.semantic_search import extract_entity_names_from_requirements, unified_search_by_entity_title, \
     extract_entity_attribute_queries, extract_key_queries
 from app.service_registry import get_platform_services
+from app.services.template_type_analysis import get_template_name_by_type
 
 
 def build_context(service_code: str, requirements_text: str = "", exclude_page_ids: Optional[List[str]] = None):
     """
     Формирование контекста с использованием единого хранилища.
+    ИЗМЕНЕНО: Теперь добавляет заголовки к документам в контексте.
 
     Args:
         service_code: Код сервиса
@@ -22,7 +25,7 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
         exclude_page_ids: Список ID страниц, исключаемых из контекста
 
     Returns:
-        Строковый контекст, объединяющий содержимое документов
+        Строковый контекст с заголовками документов
     """
     logger.info("[build_context] <- service_code=%s, requirements_length=%d, exclude_pages=%d",
                 service_code, len(requirements_text), len(exclude_page_ids or []))
@@ -39,14 +42,13 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
     # 2. Точный поиск документов по названиям сущностей (приоритет #1)
     #
     exact_match_docs = unified_search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
-    logger.debug("[build_context] step2 passed: exact matched docs = '%s'", exact_match_docs)
+    logger.debug("[build_context] step2 passed: exact matched docs = %d", len(exact_match_docs))
 
     #
     # 3. Извлекаем ключевые запросы из текста требований
     #
-    search_queries = _prepare_search_queries(requirements_text) # тяжелая операция с привлечением LLM
-    # отбор атрибутов сущностей
-    entity_queries = extract_entity_attribute_queries(requirements_text) # TODO лишнее, входит в состав предыдущей цепочки?
+    search_queries = _prepare_search_queries(requirements_text)
+    entity_queries = extract_entity_attribute_queries(requirements_text)
     regular_queries = [q for q in search_queries if q not in entity_queries]
     logger.debug("[build_context] step3 passed: regular queries = '%s'", regular_queries)
 
@@ -70,12 +72,12 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
         exclude_page_ids=exclude_page_ids,
         k_per_query=2,
         embeddings_model=embeddings_model,
-        exclude_services=["dataModel"]  # Исключаем dataModel, так как искали точно на шаге 2
+        exclude_services=["dataModel"]
     )
     logger.debug("[build_context] step5 passed: found %d platform docs.", len(platform_docs))
 
     #
-    # 6. Контекст из ссылок неподтвержденных требований (за исключением тех, что уже в составе требований)
+    # 6. Контекст из ссылок неподтвержденных требований
     #
     linked_docs = _extract_linked_context_optimized(exclude_page_ids) if exclude_page_ids else []
     logger.debug("[build_context] step6 passed: found %d linked docs.", len(linked_docs))
@@ -88,42 +90,35 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
     logger.debug("[build_context] step7 passed: total %d unique docs.", len(unique_docs))
 
     #
-    # 8. Формируем полный контекст
+    # 8. ИЗМЕНЕНО: Формируем контекст с названиями шаблонов вместо кодов
     #
-    context_parts = [d.page_content for d in unique_docs]
+    context_parts = []
+    for doc in unique_docs:
+        # Добавляем заголовок документа
+        title = doc.metadata.get('title', 'Без названия')
+        requirement_type_code = doc.metadata.get('requirement_type', 'unknown')
+
+        # ИЗМЕНЕНИЕ: Получаем человекочитаемое название типа шаблона
+        requirement_type_name = get_template_name_by_type(requirement_type_code)
+
+        header = f"---\ntitle: {title}\ntype: {requirement_type_name}\n---\n"
+        context_parts.append(header + doc.page_content)
+
+        logger.debug("[build_context] Added doc: title='%s', type_code='%s', type_name='%s'",
+                     title, requirement_type_code, requirement_type_name)
+
     context = "\n\n".join(context_parts)
     context = _smart_truncate_context(context, max_length=16000)
-    logger.debug("[build_context] step8 passed: docs stat is {exact matched=%d, service=%d, platform=%d, linked=%d}. Truncated context: '%s'",
-                 len(exact_match_docs), len(service_docs), len(platform_docs), len(linked_docs), context)
 
-    logger.info("[build_context] -> Truncated context length = %d", len(context))
+    logger.debug("[build_context] step8 passed: context=\n'%s'", context)
+    logger.info("[build_context] -> Context with template names, length = %d", len(context))
     return context
 
 
-def _prepare_search_queries(requirements_text: str) -> List[str]:
-    """Формирует запросы для поиска с помощью LLM"""
-    if not requirements_text.strip():
-        return [""]
-
-    # Извлекаем ключевые запросы с помощью LLM
-    key_queries = extract_key_queries(requirements_text)
-
-    if key_queries:
-        logger.debug("[_prepare_search_queries] -> Using %d key queries", len(key_queries))
-        return key_queries
-
-    # Fallback: если ничего не нашли - берем первые 10 слов
-    fallback_query = " ".join(requirements_text.split()[:10])
-    logger.warning("[_prepare_search_queries] -> Using fallback query: %s", fallback_query)
-    return [fallback_query]
-
-
-def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
+def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Document]:
     """
+    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
     Извлечение контекста по ссылкам ТОЛЬКО из неподтвержденных (цветных) фрагментов.
-    Ссылки ищет только в первых 5-и (настройках) страницах.
-    Вытаскивает с учетом всех документов только первые 3 (настройка) ссылки.
-    TODO: добавить анализ, что данная ссылка уже извлекалась, игнорировать ее и искать другую.
     """
     logger.info("[_extract_linked_context_optimized] <- Processing %d pages for links", len(exclude_page_ids))
 
@@ -142,7 +137,8 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
 
             # Ищем ссылки ТОЛЬКО в неподтвержденных фрагментах
             linked_page_ids = _extract_links_from_unconfirmed_fragments(content, exclude_page_ids)
-            logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments for page '%s'", len(linked_page_ids), page_id)
+            logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments for page '%s'",
+                         len(linked_page_ids), page_id)
 
             for linked_page_id in linked_page_ids[:2]:
                 if len(linked_docs) >= max_linked_pages:
@@ -150,7 +146,20 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
 
                 linked_content = _get_approved_content_cached(linked_page_id)
                 if linked_content and linked_content.strip():
-                    linked_docs.append(linked_content)
+                    # ИЗМЕНЕНО: Создаем Document объект
+                    from app.confluence_loader import get_page_title_by_id
+                    linked_title = get_page_title_by_id(linked_page_id) or f"Страница {linked_page_id}"
+
+                    doc = Document(
+                        page_content=linked_content,
+                        metadata={
+                            'page_id': linked_page_id,
+                            'title': linked_title,
+                            'requirement_type': 'linked',
+                            'source': 'linked_reference'
+                        }
+                    )
+                    linked_docs.append(doc)
                     logger.debug("[_extract_linked_context_optimized] Added content from linked page '%s'",
                                  linked_page_id)
 
@@ -165,8 +174,9 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[str]:
 
 
 def unified_service_search(queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                           k_per_query: int, embeddings_model) -> List:
+                           k_per_query: int, embeddings_model) -> List[Document]:
     """
+    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
     Поиск требований конкретного сервиса в едином хранилище.
     """
     logger.debug("[unified_service_search] <- %d queries for service_code='%s'", len(queries), service_code)
@@ -202,8 +212,10 @@ def unified_service_search(queries: List[str], service_code: str, exclude_page_i
 
 
 def unified_platform_search(queries: List[str], exclude_page_ids: Optional[List[str]],
-                            k_per_query: int, embeddings_model, exclude_services: Optional[List[str]] = None) -> List:
+                            k_per_query: int, embeddings_model, exclude_services: Optional[List[str]] = None) -> List[
+    Document]:
     """
+    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
     Поиск платформенных требований в едином хранилище.
     """
     logger.debug("[unified_platform_search] <- %d queries, exclude_services=%s", len(queries), exclude_services)
@@ -275,8 +287,11 @@ def unified_platform_search(queries: List[str], exclude_page_ids: Optional[List[
     return all_docs
 
 
-def _fast_deduplicate_documents(docs: List) -> List:
-    """Быстрая дедупликация документов"""
+def _fast_deduplicate_documents(docs: List[Document]) -> List[Document]:
+    """
+    ИЗМЕНЕНО: Теперь принимает и возвращает Document объекты.
+    Быстрая дедупликация документов
+    """
     seen_composite_keys = set()
     unique_docs = []
 
@@ -291,6 +306,24 @@ def _fast_deduplicate_documents(docs: List) -> List:
 
     logger.debug("[_fast_deduplicate_documents] Deduplicated %d -> %d documents", len(docs), len(unique_docs))
     return unique_docs
+
+
+def _prepare_search_queries(requirements_text: str) -> List[str]:
+    """Формирует запросы для поиска с помощью LLM"""
+    if not requirements_text.strip():
+        return [""]
+
+    # Извлекаем ключевые запросы с помощью LLM
+    key_queries = extract_key_queries(requirements_text)
+
+    if key_queries:
+        logger.debug("[_prepare_search_queries] -> Using %d key queries", len(key_queries))
+        return key_queries
+
+    # Fallback: если ничего не нашли - берем первые 10 слов
+    fallback_query = " ".join(requirements_text.split()[:10])
+    logger.warning("[_prepare_search_queries] -> Using fallback query: %s", fallback_query)
+    return [fallback_query]
 
 
 def _smart_truncate_context(context: str, max_length: int) -> str:

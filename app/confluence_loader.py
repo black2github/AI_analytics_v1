@@ -86,7 +86,7 @@ def get_page_title_by_id(page_id: str) -> Optional[str]:
 def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
     """
     Загрузка страниц из Confluence по идентификаторам и разбиение на:
-    идентификатор, заголовок, содержимое, подтвержденное содержимое (текст подтвержденных/черных требований) и тип требования.
+    идентификатор, заголовок, содержимое, подтвержденное содержимое и тип требования.
 
     Args:
         page_ids: список идентификаторов страниц для загрузки.
@@ -94,34 +94,30 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
         страницы (словари) с id, title, content, approved_content, requirement_type.
     """
     logger.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
+
+    # ДОБАВЛЯЕМ ИМПОРТ
+    from app.services.template_type_analysis import analyze_content_template_type
+
     pages = []
     for page_id in page_ids:
         title = get_page_title_by_id(page_id)
         raw_html = get_page_content_by_id(page_id, clean_html=False)
-        # TODO похоже далее должно быть примерно так, как описано в следующей строке
-        # full_md = filter_all_fragments(raw_html) if raw_html else None
         full_md = markdownify.markdownify(raw_html, heading_style="ATX") if raw_html else None
         approved_md = extract_approved_fragments(raw_html) if raw_html else None
-        # TODO добавить определение типа требований, но без циклической зависимости
-        # requirement_type = analyze_content_template_type(title, raw_html)
+
+        # ДОБАВЛЯЕМ ОПРЕДЕЛЕНИЕ ТИПА ТРЕБОВАНИЯ
+        requirement_type = analyze_content_template_type(title, raw_html) if (title and raw_html) else None
 
         if not (title and full_md and approved_md):
             logging.warning("Пропущена страница {%s} из-за ошибок загрузки.", page_id)
             continue
-        # TODO Требуется добавить тип требования, чтобы потом добавлять заголовок в начало страницы.
-        # Например, если это описание сущности, то сразу идет описание и при слиянии страниц в один контекст не ясно,
-        # чей это фрагмент. Поэтому добавляем условный заголовок (ниже).
-        # ---
-        # title: Название статьи
-        # ---
-        # approved_md = f"---\ntitle: {title}\n---\n" + approved_md
-        # full_md = f"---\ntitle: {title}\n---\n" + full_md
 
         pages.append({
             "id": page_id,
             "title": title,
             "content": full_md,
-            "approved_content": approved_md
+            "approved_content": approved_md,
+            "requirement_type": requirement_type
         })
 
     logger.info("[load_pages_by_ids] -> Успешно загружено страниц: %s из %s", len(pages), len(page_ids))

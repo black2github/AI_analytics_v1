@@ -43,27 +43,14 @@ def prepare_unified_documents(
 ) -> list[Document]:
     """
     Создает документы для единого хранилища с новой схемой метаданных.
-
-    Args:
-        pages: Список страниц для обработки
-        service_code: Код сервиса
-        doc_type: Тип документа ("requirement" или "template")
-        requirement_type: Тип требования (для шаблонов)
-        source: Источник требований
-
-    Returns:
-        Список документов с метаданными для единого хранилища
     """
     logger.debug("[prepare_unified_documents] <- Processing %d pages, service_code='%s', doc_type='%s'",
                  len(pages), service_code, doc_type)
 
     docs = []
-
-    # Определяем статус платформенности для сервиса
     is_platform = get_platform_status(service_code) if doc_type == "requirement" else False
 
     for page in pages:
-        # Используем подтвержденное содержимое
         content = page.get("approved_content", "")
         if not content or not content.strip():
             logger.warning("[prepare_unified_documents] No approved content for page %s", page.get("id"))
@@ -79,16 +66,17 @@ def prepare_unified_documents(
             "page_id": page["id"]
         }
 
-        # Добавляем requirement_type для шаблонов
+        # ИЗМЕНЯЕМ ЛОГИКУ ДОБАВЛЕНИЯ requirement_type
         if requirement_type:
+            # Приоритет у параметра метода
             metadata["requirement_type"] = requirement_type
-        # else:
-        #     # Определяет тип требования для страниц, если он не определен аргументом
-        #     requirement_type = page.get("requirement_type")
-        #     metadata["requirement_type"] = requirement_type
+        elif page.get("requirement_type"):
+            # Используем тип из страницы
+            metadata["requirement_type"] = page["requirement_type"]
+        # Если ни того, ни другого нет - оставляем без requirement_type
 
-        logger.debug("[prepare_unified_documents] Creating doc: page_id=%s, title='%s', is_platform=%s",
-                     page["id"], page["title"], is_platform)
+        logger.debug("[prepare_unified_documents] Creating doc: page_id=%s, title='%s', requirement_type='%s'",
+                     page["id"], page["title"], metadata.get("requirement_type"))
 
         doc = Document(page_content=content.strip(), metadata=metadata)
         docs.append(doc)

@@ -3,6 +3,7 @@
 import logging
 import re
 from typing import List, Set, Optional
+from langchain_core.documents import Document  # ДОБАВЛЯЕМ ИМПОРТ
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
 from app.embedding_store import get_vectorstore
@@ -325,10 +326,10 @@ def extract_entity_names_from_requirements(requirements_text: str) -> List[str]:
 
 
 def unified_search_by_entity_title(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                                   embeddings_model) -> List:
+                                   embeddings_model) -> List[Document]:
     """
+    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
     Поиск документов по точному совпадению title с именем сущности в едином хранилище.
-    Оптимизированная версия с одним запросом.
     """
     logger.debug("[unified_search_by_entity_title] <- Searching for entities: %s", entity_names)
 
@@ -342,9 +343,9 @@ def unified_search_by_entity_title(entity_names: List[str], service_code: str, e
     if not cleaned_entity_names:
         return []
 
-    # ОПТИМИЗАЦИЯ: Один запрос для поиска в dataModel и текущем сервисе
+    # Один запрос для поиска в dataModel и текущем сервисе
     service_codes = ["dataModel"]
-    if service_code != "dataModel":  # Избегаем дублирования если service_code уже "dataModel"
+    if service_code != "dataModel":
         service_codes.append(service_code)
 
     unified_filter = {
@@ -362,17 +363,16 @@ def unified_search_by_entity_title(entity_names: List[str], service_code: str, e
     logger.debug("[unified_search_by_entity_title] Optimized unified filter: %s", unified_filter)
 
     try:
-        # Один запрос для всех сущностей в обоих сервисах
         docs = store.similarity_search(
-            query="",  # Пустой запрос, полагаемся только на фильтры
-            k=len(cleaned_entity_names) * 8,  # Увеличиваем k, так как ищем в двух сервисах
+            query="",
+            k=len(cleaned_entity_names) * 8,
             filter=unified_filter
         )
 
         logger.debug("[unified_search_by_entity_title] Found %d docs for entities: %s in services: %s",
                      len(docs), cleaned_entity_names, service_codes)
 
-        # Логируем какие именно сущности найдены и в каких сервисах
+        # Логируем статистику
         found_entities_by_service = {}
         for doc in docs:
             doc_service = doc.metadata.get('service_code', 'unknown')
@@ -393,11 +393,10 @@ def unified_search_by_entity_title(entity_names: List[str], service_code: str, e
 
 
 def search_by_entity_title(entity_names: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
-                           embeddings_model) -> List:
+                           embeddings_model) -> List[Document]:
     """
+    ИЗМЕНЕНО: Теперь возвращает список Document объектов.
     Поиск в едином хранилище страниц с точным совпадением title с именем сущности.
-    Теперь использует unified_search_by_entity_title напрямую.
     """
     logger.debug("[search_by_entity_title] <- Searching by exact title match for entities: %s", entity_names)
-
     return unified_search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)
