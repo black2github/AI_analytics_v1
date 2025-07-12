@@ -3,7 +3,8 @@
 import pytest
 from unittest.mock import patch, Mock, MagicMock
 from app.services.analysis_service import analyze_text, analyze_pages
-from app.services.context_builder import build_context, _prepare_search_queries, _fast_deduplicate_documents
+from app.services.context_builder import build_context, _prepare_search_queries, _fast_deduplicate_documents, \
+    build_context_optimized
 from langchain_core.documents import Document
 
 
@@ -25,7 +26,8 @@ class TestRAGPipeline:
         ]
         mock_vectorstore.return_value = mock_store
 
-        result = build_context("CC", "test requirements", exclude_page_ids=["456"])
+        # result = build_context("CC", "test requirements", exclude_page_ids=["456"])
+        result = build_context_optimized("CC", "test requirements", exclude_page_ids=["456"])
 
         assert isinstance(result, str)
         assert len(result) > 0

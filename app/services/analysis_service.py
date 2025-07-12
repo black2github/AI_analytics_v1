@@ -11,7 +11,7 @@ from app.confluence_loader import get_page_content_by_id
 from app.rag_pipeline import logger, build_chain, count_tokens, build_template_analysis_chain
 from app.services.template_type_analysis import perform_legacy_structure_check
 from app.service_registry import resolve_service_code_by_user, resolve_service_code_from_pages_or_user
-from app.services.context_builder import build_context
+from app.services.context_builder import build_context, build_context_optimized
 from app.template_registry import get_template_by_type
 
 
@@ -22,7 +22,8 @@ def analyze_text(text: str, prompt_template: Optional[str] = None, service_code:
         logger.info("[analyze_text] Resolved service_code: %s", service_code)
 
     chain = build_chain(prompt_template)
-    context = build_context(service_code, requirements_text=text)
+    # context = build_context(service_code, requirements_text=text)
+    context = build_context_optimized(service_code, requirements_text=text)
 
     try:
         result = chain.run({"requirement": text, "context": context})
@@ -91,7 +92,8 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
         #
         # Формируем контекст ((для {context})
         #
-        context = build_context(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
+        # context = build_context(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
+        context = build_context_optimized(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
 
         context_tokens = count_tokens(context)
         if context_tokens > max_context_tokens:
