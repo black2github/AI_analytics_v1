@@ -152,6 +152,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
             else:
                 logger.info("[build_context_optimized] Early stop: token limit reached at exact matches")
                 break
+    logger.debug("[build_context_optimized] step1 passed: exact matched docs = %d", len(context_docs))
 
     #
     # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место)
@@ -180,6 +181,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
             else:
                 logger.info("[build_context_optimized] Early stop: limit reached at service docs")
                 break
+    logger.debug("[build_context_optimized] step2 passed: total docs (including service's) = %d", len(context_docs))
 
     #
     # 3. ПЛАТФОРМЕННЫЕ ДОКУМЕНТЫ (если еще есть место)
@@ -203,6 +205,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
             else:
                 logger.info("[build_context_optimized] Early stop: limit reached at platform docs")
                 break
+    logger.debug("[build_context_optimized] step3 passed: total docs (including platform's) = %d", len(context_docs))
 
     #
     # 4. СВЯЗАННЫЕ ДОКУМЕНТЫ (только если совсем мало контекста)
@@ -218,6 +221,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
                 current_tokens += tokens
             else:
                 break
+    logger.debug("[build_context_optimized] step4 passed: total docs (including linked) = %d", len(context_docs))
 
     # Формируем финальный контекст
     context = _build_final_context(context_docs)
