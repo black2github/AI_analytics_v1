@@ -77,7 +77,8 @@ def _extract_regular_key_queries_with_llm(requirements_text: str) -> List[str]:
             line = line.strip()
             line = re.sub(r'^\d+\.\s*[-+*]*', '', line)
             line = re.sub(r'^\[\[', '[', line)
-            line = re.sub(r'[\]+*-]+$', '', line)
+            # line = re.sub(r'[\]+*-]+$', '', line)
+            line = re.sub(r'[\]+*-]+[\s-\s]*[А-ЯЁа-яёA-Za-z\s\,\.\(\)]*$', '', line) # после запроса через '-' может идти пояснение
             if line and len(line) > 2:
                 queries.append(line)
 

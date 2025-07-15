@@ -127,6 +127,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
 
     # Настройки ограничений
     MAX_DOCS_TOTAL = 15  # Максимум документов в контексте
+    # MAX_DOCS_TOTAL = 2  # Максимум документов в контексте
     MAX_TOKENS_TOTAL = 14000  # Резерв для обрезки
 
     context_docs = []
@@ -154,58 +155,59 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
                 break
     logger.debug("[build_context_optimized] step1 passed: exact matched docs = %d", len(context_docs))
 
+    # #
+    # # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место)
+    # #
+    # if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
+    #     search_queries = _prepare_search_queries(requirements_text)
+    #     # берем запросы, отличающиеся от запросов поиска сущностей в хранилище
+    #     regular_queries = [q for q in search_queries if q not in extract_entity_attribute_queries(requirements_text)]
     #
-    # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место)
+    #     service_docs = unified_service_search(
+    #         queries=regular_queries,
+    #         service_code=service_code,
+    #         exclude_page_ids=exclude_page_ids,
+    #         k_per_query=2,  # УМЕНЬШАЕМ, так как ограничиваем рано
+    #         embeddings_model=embeddings_model
+    #     )
     #
-    if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
-        search_queries = _prepare_search_queries(requirements_text)
-        regular_queries = [q for q in search_queries if q not in extract_entity_attribute_queries(requirements_text)]
-
-        service_docs = unified_service_search(
-            queries=regular_queries,
-            service_code=service_code,
-            exclude_page_ids=exclude_page_ids,
-            k_per_query=2,  # УМЕНЬШАЕМ, так как ограничиваем рано
-            embeddings_model=embeddings_model
-        )
-
-        # Дедупликация с уже найденными
-        service_docs = _deduplicate_with_existing(service_docs, context_docs)
-        service_docs = service_docs[:min(5, MAX_DOCS_TOTAL - len(context_docs))]
-
-        for doc in service_docs:
-            tokens = count_tokens_with_header(doc)
-            if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
-                context_docs.append(doc)
-                current_tokens += tokens
-            else:
-                logger.info("[build_context_optimized] Early stop: limit reached at service docs")
-                break
-    logger.debug("[build_context_optimized] step2 passed: total docs (including service's) = %d", len(context_docs))
-
+    #     # Дедупликация с уже найденными
+    #     service_docs = _deduplicate_with_existing(service_docs, context_docs)
+    #     service_docs = service_docs[:min(5, MAX_DOCS_TOTAL - len(context_docs))]
     #
-    # 3. ПЛАТФОРМЕННЫЕ ДОКУМЕНТЫ (если еще есть место)
+    #     for doc in service_docs:
+    #         tokens = count_tokens_with_header(doc)
+    #         if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
+    #             context_docs.append(doc)
+    #             current_tokens += tokens
+    #         else:
+    #             logger.info("[build_context_optimized] Early stop: limit reached at service docs")
+    #             break
+    # logger.debug("[build_context_optimized] step2 passed: total docs (including service's) = %d", len(context_docs))
     #
-    if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
-        platform_docs = unified_platform_search(
-            queries=regular_queries,
-            exclude_page_ids=exclude_page_ids,
-            k_per_query=1,  # УМЕНЬШАЕМ
-            embeddings_model=embeddings_model,
-            exclude_services=["dataModel"]
-        )
-
-        platform_docs = _deduplicate_with_existing(platform_docs, context_docs)
-
-        for doc in platform_docs:
-            tokens = count_tokens_with_header(doc)
-            if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
-                context_docs.append(doc)
-                current_tokens += tokens
-            else:
-                logger.info("[build_context_optimized] Early stop: limit reached at platform docs")
-                break
-    logger.debug("[build_context_optimized] step3 passed: total docs (including platform's) = %d", len(context_docs))
+    # #
+    # # 3. ПЛАТФОРМЕННЫЕ ДОКУМЕНТЫ (если еще есть место)
+    # #
+    # if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
+    #     platform_docs = unified_platform_search(
+    #         queries=regular_queries,
+    #         exclude_page_ids=exclude_page_ids,
+    #         k_per_query=1,  # УМЕНЬШАЕМ
+    #         embeddings_model=embeddings_model,
+    #         exclude_services=["dataModel"]
+    #     )
+    #
+    #     platform_docs = _deduplicate_with_existing(platform_docs, context_docs)
+    #
+    #     for doc in platform_docs:
+    #         tokens = count_tokens_with_header(doc)
+    #         if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
+    #             context_docs.append(doc)
+    #             current_tokens += tokens
+    #         else:
+    #             logger.info("[build_context_optimized] Early stop: limit reached at platform docs")
+    #             break
+    # logger.debug("[build_context_optimized] step3 passed: total docs (including platform's) = %d", len(context_docs))
 
     #
     # 4. СВЯЗАННЫЕ ДОКУМЕНТЫ (только если совсем мало контекста)
@@ -241,7 +243,7 @@ def _build_final_context(context_docs: List[Document]) -> str:
     Returns:
         Строковый контекст с заголовками документов
     """
-    logger.debug("[build_final_context] <- got %d docs", len(context_docs))
+    logger.debug("[_build_final_context] <- got %d docs", len(context_docs))
     from app.services.template_type_analysis import get_template_name_by_type
 
     if not context_docs:
@@ -287,8 +289,8 @@ def _deduplicate_with_existing(new_docs: List[Document], existing_docs: List[Doc
 
 def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Document]:
     """
-    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
     Извлечение контекста по ссылкам ТОЛЬКО из неподтвержденных (цветных) фрагментов.
+    Возвращает список Document.
     """
     logger.info("[_extract_linked_context_optimized] <- Processing %d pages for links", len(exclude_page_ids))
 
@@ -296,8 +298,11 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Docum
         return []
 
     linked_docs = []
-    max_linked_pages = 3
-    max_pages = 5
+    max_linked_pages = 15
+    max_pages = 10
+
+    # Определяем среднее допустимое число линков на странице с учетом числа анализируемых страниц
+    max_links_per_page = max_linked_pages // min (max_pages, len(exclude_page_ids)) + 1
 
     for page_id in exclude_page_ids[:max_pages]:
         try:
@@ -310,13 +315,13 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Docum
             logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments for page '%s'",
                          len(linked_page_ids), page_id)
 
-            for linked_page_id in linked_page_ids[:2]:
+            for linked_page_id in linked_page_ids[:max_links_per_page]: # на каждой странице берем не более max_links_per_page линков
                 if len(linked_docs) >= max_linked_pages:
                     break
 
                 linked_content = _get_approved_content_cached(linked_page_id)
                 if linked_content and linked_content.strip():
-                    # ИЗМЕНЕНО: Создаем Document объект
+                    # Создаем Document объект
                     from app.confluence_loader import get_page_title_by_id
                     linked_title = get_page_title_by_id(linked_page_id) or f"Страница {linked_page_id}"
 

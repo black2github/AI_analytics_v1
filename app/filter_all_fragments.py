@@ -25,6 +25,7 @@ def test_filter_all_fragments():
 
     # МЕСТО ДЛЯ ВСТАВКИ HTML ФРАГМЕНТА
     html_fragment = '''
+    <h1 id="id-[КК_Карты]Настройкаскроллера&quot;Списоккарт&quot;-Связанныеатрибуты"><span style="color: rgb(23,43,77);">Связанные атрибуты</span></h1><p><span style="color: rgb(23,43,77);">Версия структуры скроллера = 1</span></p><p><span style="color: rgb(23,43,77);">Идентификатор скроллера = "cc_card_list"</span></p>
             '''
 
     print("=== ВХОДНОЙ HTML ===")

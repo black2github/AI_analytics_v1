@@ -1,4 +1,4 @@
-# app/content_extractor.py - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/content_extractor.py
 
 import logging
 import re
@@ -329,7 +329,12 @@ class ContentExtractor:
         if not content:
             return ""
 
+        # ИСПРАВЛЕНИЕ: Добавляем перевод строки для всех контекстов
         if context in ["table_cell", "nested_table_cell"]:
+            if not content.endswith('\n'):
+                content += '\n'
+        else:
+            # Для обычного контекста тоже добавляем перевод строки
             if not content.endswith('\n'):
                 content += '\n'
 
@@ -840,7 +845,12 @@ class ContentExtractor:
         if not content:
             return ""
 
+        # Добавляем перевод строки для всех контекстов
         if context in ["table_cell", "nested_table_cell"]:
+            if not content.endswith('\n'):
+                content += '\n'
+        else:
+            # Для обычного контекста тоже добавляем перевод строки
             if not content.endswith('\n'):
                 content += '\n'
 

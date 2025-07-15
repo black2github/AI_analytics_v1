@@ -44,7 +44,7 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
 
 
 def _extract_links_from_unconfirmed_fragments(html_content: str, exclude_page_ids: List[str]) -> List[str]:
-    """Извлекает ссылки ТОЛЬКО из неподтвержденных (цветных) фрагментов требований."""
+    """Извлекает уникальные ссылки ТОЛЬКО из неподтвержденных (цветных) фрагментов требований."""
     soup = BeautifulSoup(html_content, 'html.parser')
     found_page_ids = set()
     exclude_set = set(exclude_page_ids)

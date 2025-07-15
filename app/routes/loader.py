@@ -1,9 +1,11 @@
-# app/routes/loader.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/routes/loader.py
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict  # ДОБАВЛЕН ИМПОРТ Dict
 from app.services.document_service import DocumentService
 import logging
+from app.llm_interface import get_embeddings_cache_info, clear_embeddings_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -153,3 +155,20 @@ async def clear_cache():
     """Очистка кеша страниц"""
     clear_page_cache()
     return {"message": "Cache cleared successfully"}
+
+@router.get("/embedding_cache_info", tags=["Кеширование"])
+async def embedding_cache_info():
+    """Информация о кеше модели эмбеддингов"""
+    cache_info = get_embeddings_cache_info()
+    return {
+        "hits": cache_info.hits,
+        "misses": cache_info.misses,
+        "current_size": cache_info.currsize,
+        "max_size": cache_info.maxsize
+    }
+
+@router.post("/clear_embedding_cache", tags=["Кеширование"])
+async def clear_embedding_cache():
+    """Очистка кеша модели эмбеддингов"""
+    clear_embeddings_cache()
+    return {"message": "Embedding model cache cleared successfully"}
