@@ -204,7 +204,7 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
         has_fragments = document_service.has_approved_fragments([page_id])
 
         if has_fragments:
-            logger.info("[_analyze_page_template_if_needed] Page %s has approved fragments, skipping template analysis",
+            logger.info("[_analyze_page_template_if_needed] -> Page %s has approved fragments, skipping template analysis",
                         page_id)
             return None
 
@@ -214,14 +214,14 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
         template_type = analyze_page_template_type(page_id)
 
         if not template_type:
-            logger.info("[_analyze_page_template_if_needed] No template type identified for page %s", page_id)
+            logger.info("[_analyze_page_template_if_needed] -> No template type identified for page %s", page_id)
             return {
                 "template_type": None,
                 "template_analysis": None,
                 "reason": "Template type not identified"
             }
 
-        logger.info("[_analyze_page_template_if_needed] Identified template type '%s' for page %s", template_type,
+        logger.info("[_analyze_page_template_if_needed] Template type is '%s' for page %s", template_type,
                     page_id)
 
         template_analysis_items = [{
@@ -247,7 +247,7 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
                 "storage_used": analysis_result.get("storage_used")
             }
         else:
-            logger.warning("[_analyze_page_template_if_needed] Template analysis failed for page %s", page_id)
+            logger.warning("[_analyze_page_template_if_needed] -> Template analysis failed for page %s", page_id)
             return {
                 "template_type": template_type,
                 "template_analysis": None,
@@ -255,7 +255,7 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
             }
 
     except Exception as e:
-        logger.error("[_analyze_page_template_if_needed] Error analyzing template for page %s: %s", page_id, str(e))
+        logger.error("[_analyze_page_template_if_needed] -> Error analyzing template for page %s: %s", page_id, str(e))
         return {
             "template_type": None,
             "template_analysis": None,

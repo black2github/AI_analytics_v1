@@ -332,7 +332,7 @@ def unified_search_by_entity_title(entity_names: List[str], service_code: str, e
     ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
     Поиск документов по точному совпадению title с именем сущности в едином хранилище.
     """
-    logger.debug("[unified_search_by_entity_title] <- Searching for entities: %s", entity_names)
+    logger.info("[unified_search_by_entity_title] <- Searching for entities: %s", entity_names)
 
     if not entity_names:
         return []
@@ -398,6 +398,7 @@ def search_by_entity_title(entity_names: List[str], service_code: str, exclude_p
     """
     ИЗМЕНЕНО: Теперь возвращает список Document объектов.
     Поиск в едином хранилище страниц с точным совпадением title с именем сущности.
+    TODO Что-то не так. Дублирование метода выше.
     """
     logger.debug("[search_by_entity_title] <- Searching by exact title match for entities: %s", entity_names)
     return unified_search_by_entity_title(entity_names, service_code, exclude_page_ids, embeddings_model)

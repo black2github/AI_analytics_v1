@@ -3,6 +3,7 @@
 import logging
 import sys
 
+MAX_CHARS_SIZE = 16000
 
 class TrimFilter(logging.Filter):
     """
@@ -20,20 +21,20 @@ class TrimFilter(logging.Filter):
 
         # Обрезаем INFO записи до 2000 символов
         if record.levelno == logging.INFO:
-            if isinstance(record.msg, str) and len(record.msg) > 2000:
-                record.msg = record.msg[:2000] + "... [обрезано]"
+            if isinstance(record.msg, str) and len(record.msg) > MAX_CHARS_SIZE:
+                record.msg = record.msg[:MAX_CHARS_SIZE] + "... [обрезано]"
             # Также обрабатываем случай с аргументами
             if hasattr(record, 'args') and record.args:
                 try:
                     # Форматируем сообщение с аргументами
                     formatted_msg = record.msg % record.args
-                    if len(formatted_msg) > 2000:
-                        record.msg = formatted_msg[:2000] + "... [обрезано]"
+                    if len(formatted_msg) > MAX_CHARS_SIZE:
+                        record.msg = formatted_msg[:MAX_CHARS_SIZE] + "... [обрезано]"
                         record.args = ()  # Очищаем args, так как уже отформатировали
                 except (TypeError, ValueError):
                     # Если форматирование не удалось, обрезаем только msg
-                    if len(str(record.msg)) > 2000:
-                        record.msg = str(record.msg)[:2000] + "... [обрезано]"
+                    if len(str(record.msg)) > MAX_CHARS_SIZE:
+                        record.msg = str(record.msg)[:MAX_CHARS_SIZE] + "... [обрезано]"
 
         # WARNING, ERROR, CRITICAL пропускаем без изменений
         return True
@@ -93,4 +94,4 @@ def setup_logging():
     logging.getLogger('langchain').setLevel(logging.WARNING)
     logging.getLogger('openai').setLevel(logging.WARNING)
 
-    logger.info("Logging configured: level=INFO, max_message_length=2000 chars")
+    logger.info(f"Logging configured: level=INFO, max_message_length={MAX_CHARS_SIZE} chars")

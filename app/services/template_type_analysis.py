@@ -34,16 +34,17 @@ class TemplateTypeAnalyzer:
     def analyze_content_type(self, page_title: str, page_html: str) -> Optional[str]:
         """
         Определяет тип шаблона для одной страницы Confluence.
+        TODO: нужно добавить метод передачи сразу текстового содержимого, чтобы избежать лишнего преобразования.
         Args:
             page_html: HTML содержимое страницы
             page_title: Наименование страницы
         Returns:
             Название типа шаблона или None если не определен
         """
-        logger.debug("[analyze_content_type] <- page_title: %s", page_title)
+        logger.info("[analyze_content_type] <- page_title: %s", page_title)
 
         if not page_title or not page_html:
-            logger.warning("[analyze_content_type] Page title or content is None")
+            logger.warning("[analyze_content_type] -> Page title or content is None")
             return None
 
         # Получаем текстовое содержимое страницы
