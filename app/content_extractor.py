@@ -24,7 +24,7 @@ class ExtractionConfig:
 
 class ContentExtractor:
     """
-    Исправленный экстрактор контента с правильной обработкой пробелов и цветовой фильтрацией.
+    Исправленный экстрактор контента с правильной обработкой порядка заголовков таблиц.
     """
 
     def __init__(self, config: ExtractionConfig):
@@ -50,6 +50,119 @@ class ContentExtractor:
 
         return result
 
+    def _process_table(self, element: Tag, context: str) -> str:
+        """
+        ИСПРАВЛЕНО: Обработка таблиц с правильным порядком заголовков
+        """
+        if not self.config.format_tables:
+            return self._process_text_container(element, context)
+
+        # ИСПРАВЛЕНИЕ: Собираем строки в правильном порядке
+        table_rows = []
+
+        # 1. СНАЧАЛА обрабатываем заголовки из thead
+        thead = element.find("thead")
+        if thead:
+            header_rows = thead.find_all("tr", recursive=False)
+            for row in header_rows:
+                cells = row.find_all(["td", "th"], recursive=False)
+                if cells:
+                    row_data = self._process_table_row_cells(cells, context, is_header=True)
+                    if row_data:
+                        table_rows.append(("header", row_data))
+
+        # 2. ЗАТЕМ обрабатываем тело таблицы из tbody
+        tbody = element.find("tbody")
+        if tbody:
+            body_rows = tbody.find_all("tr", recursive=False)
+            for row in body_rows:
+                cells = row.find_all(["td", "th"], recursive=False)
+                if cells:
+                    row_data = self._process_table_row_cells(cells, context, is_header=False)
+                    if row_data:
+                        table_rows.append(("body", row_data))
+
+        # 3. Если нет явных thead/tbody, берем все tr напрямую
+        if not table_rows:
+            direct_rows = element.find_all("tr", recursive=False)
+            for i, row in enumerate(direct_rows):
+                cells = row.find_all(["td", "th"], recursive=False)
+                if cells:
+                    # Первая строка считается заголовком, если все ячейки - th
+                    is_header = (i == 0 and all(cell.name == "th" for cell in cells))
+                    row_data = self._process_table_row_cells(cells, context, is_header=is_header)
+                    if row_data:
+                        row_type = "header" if is_header else "body"
+                        table_rows.append((row_type, row_data))
+
+        if not table_rows:
+            return ""
+
+        # Формируем таблицу в правильном порядке
+        table_lines = []
+        has_headers = False
+
+        for row_type, row_data in table_rows:
+            if row_type == "header" and not has_headers:
+                # Добавляем заголовки
+                table_lines.append("| " + " | ".join(row_data) + " |")
+                table_lines.append("|" + "|".join([" --- " for _ in row_data]) + "|")
+                has_headers = True
+            elif row_type == "body":
+                # Добавляем строки тела таблицы
+                table_lines.append("| " + " | ".join(row_data) + " |")
+
+        table_content = "\n".join(table_lines) if table_lines else ""
+
+        if table_content:
+            return f"**Таблица:**\n{table_content}"
+        return ""
+
+    def _process_table_row_cells(self, cells: List[Tag], context: str, is_header: bool = False) -> List[str]:
+        """
+        НОВЫЙ МЕТОД: Обработка ячеек строки таблицы
+        """
+        row_data = []
+
+        for cell in cells:
+            if not self._should_include_element(cell):
+                if not self.config.include_colored:
+                    black_content = self._extract_black_elements_from_colored_container(cell, context)
+                    if black_content:
+                        cell_text = self._format_table_cell_content(black_content, cell)
+                    else:
+                        cell_text = ""
+                else:
+                    continue
+            else:
+                cell_content = self._process_table_cell(cell, "table_cell")
+                cell_text = self._format_table_cell_content(cell_content, cell)
+
+            row_data.append(cell_text)
+
+        return row_data
+
+    def _format_table_cell_content(self, content: str, cell: Tag) -> str:
+        """
+        НОВЫЙ МЕТОД: Форматирование содержимого ячейки с HTML атрибутами
+        """
+        if not content:
+            content = ""
+
+        # Добавляем HTML атрибуты для объединенных ячеек
+        html_attrs = []
+        if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
+            html_attrs.append(f'rowspan="{cell["rowspan"]}"')
+        if cell.get("colspan") and int(cell.get("colspan", 1)) > 1:
+            html_attrs.append(f'colspan="{cell["colspan"]}"')
+
+        if html_attrs:
+            attrs_str = " ".join(html_attrs)
+            return f'<td {attrs_str}>{content}</td>' if content else f'<td {attrs_str}></td>'
+        else:
+            return content
+
+    # Остальные методы остаются без изменений (копируем из предыдущей версии)
     def _process_element(self, element, context: str = "default") -> Optional[str]:
         """Универсальная рекурсивная обработка элемента"""
         if isinstance(element, NavigableString):
@@ -590,62 +703,6 @@ class ContentExtractor:
 
         if content:
             return f"{prefix} {content}"
-        return ""
-
-    def _process_table(self, element: Tag, context: str) -> str:
-        """Обработка таблиц (без изменений)"""
-        if not self.config.format_tables:
-            return self._process_text_container(element, context)
-
-        rows = element.find_all("tr", recursive=False)
-        if not rows:
-            tbody = element.find("tbody")
-            thead = element.find("thead")
-            if tbody:
-                rows.extend(tbody.find_all("tr", recursive=False))
-            if thead:
-                rows.extend(thead.find_all("tr", recursive=False))
-
-        if not rows:
-            return ""
-
-        table_lines = []
-        has_headers = False
-
-        for i, row in enumerate(rows):
-            cells = row.find_all(["td", "th"], recursive=False)
-            row_data = []
-
-            is_header_row = all(cell.name == "th" for cell in cells)
-
-            for cell in cells:
-                cell_content = self._process_table_cell(cell, "table_cell")
-
-                html_attrs = []
-                if cell.get("rowspan") and int(cell.get("rowspan", 1)) > 1:
-                    html_attrs.append(f'rowspan="{cell["rowspan"]}"')
-                if cell.get("colspan") and int(cell.get("colspan", 1)) > 1:
-                    html_attrs.append(f'colspan="{cell["colspan"]}"')
-
-                if html_attrs:
-                    attrs_str = " ".join(html_attrs)
-                    cell_text = f'<td {attrs_str}>{cell_content}</td>' if cell_content else f'<td {attrs_str}></td>'
-                else:
-                    cell_text = cell_content if cell_content else ""
-
-                row_data.append(cell_text)
-
-            if is_header_row and not has_headers:
-                table_lines.append("| " + " | ".join(row_data) + " |")
-                table_lines.append("|" + "|".join([" --- " for _ in row_data]) + "|")
-                has_headers = True
-            else:
-                table_lines.append("| " + " | ".join(row_data) + " |")
-
-        table_content = "\n".join(table_lines) if table_lines else ""
-
-        if table_content:
-            return f"**Таблица:**\n{table_content}"
         return ""
 
     def _process_table_cell(self, element: Tag, context: str) -> str:
