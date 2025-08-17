@@ -1,10 +1,10 @@
-# app/routes/service_summary.py
+# app/routes/summary.py
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import logging
-from app.services.service_summary_service import ServiceSummaryService
+from app.services.summary_service import ServiceSummaryService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
