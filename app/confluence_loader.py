@@ -3,11 +3,8 @@
 import logging
 from typing import List, Dict, Optional
 from atlassian import Confluence
-# import markdownify
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
-# from app.filter_all_fragments import filter_all_fragments
 from app.filter_approved_fragments import filter_approved_fragments
-# from app.history_cleaner import remove_history_sections
 
 if CONFLUENCE_BASE_URL is None:
     raise ValueError("Переменная окружения CONFLUENCE_BASE_URL не задана")
@@ -18,7 +15,7 @@ confluence = Confluence(
     password=CONFLUENCE_PASSWORD
 )
 
-logger = logging.getLogger(__name__)  # Лучше использовать __name__ для именованных логгеров
+logger = logging.getLogger(__name__)
 
 try:
     from markdownify import markdownify as markdownify_fn
@@ -38,7 +35,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[str]:
     """
-    ОПТИМИЗИРОВАНО: Использует кеширование.
+    Использует кеширование.
     Получает содержимое страницы Confluence по её ID.
     """
     logger.info("[get_page_content_by_id] <- page_id=%s, clean_html=%s", page_id, clean_html)
@@ -62,7 +59,6 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
 def get_page_title_by_id(page_id: str) -> Optional[str]:
     """
     ОПТИМИЗИРОВАНО: Использует кеширование.
-
     Получает заголовок страницы по ID.
     """
     logger.debug("[get_page_title_by_id] <- page_id=%s", page_id)
