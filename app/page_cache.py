@@ -41,7 +41,7 @@ def get_page_data_cached(page_id: str) -> Optional[Dict]:
 
         # Все виды обработки HTML выполняем один раз
         full_content = filter_all_fragments(raw_html)
-        # full_markdown = markdownify.markdownify(raw_html, heading_style="ATX")
+        full_markdown = markdownify.markdownify(raw_html, heading_style="ATX")
         approved_content = extract_approved_fragments(raw_html)
         requirement_type = analyze_content_template_type(title, raw_html)
 
@@ -50,7 +50,7 @@ def get_page_data_cached(page_id: str) -> Optional[Dict]:
             'title': title,
             'raw_html': raw_html,
             'full_content': full_content,
-            # 'full_markdown': full_markdown,
+            'full_markdown': full_markdown,
             'approved_content': approved_content,
             'requirement_type': requirement_type
         }

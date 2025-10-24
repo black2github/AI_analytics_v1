@@ -3,50 +3,338 @@
     "code": "roleModel",
     "name": "[ЦРМ] Роли и Ролевая модель (Концепция)",
     "platform": true
-  },
-  {
+  }, {
+    "code": "biometrics",
+    "name": "[БПО] Сервис биометрической идентификации",
+    "platform": true
+  }, {
+    "code": "IOCustomer",
+    "name": "[ИО Клиент] Сервис по обработке сообщения ИО Клиент",
+    "platform": true
+  }, {
+    "code": "SUV",
+    "name": "[СУВ] Сервис по работе с сообщениями СУВ",
+    "platform": true
+  }, {
+    "code": "signature",
+    "name": "[ЭП] Сервис по работе с электронной подписью",
+    "platform": true
+  }, {
+    "code": "notifications",
+    "name": "[Уведомления] Сервис работы с уведомлениями",
+    "platform": true
+  }, {
+    "code": "information",
+    "name": "[Информ] Сервис информирования",
+    "platform": true
+  }, {
+    "code": "notices",
+    "name": "[Нотификация] Сервис по работе с нотификациями",
+    "platform": true
+  }, {
     "code": "dataModel",
     "name": "Модель данных",
     "platform": true
-  },
-  {
+  }, {
+    "code": "dataModel",
+    "name": "Модель данных",
+    "platform": true
+  }, {
     "code": "UAA",
     "name": "[UAA] Сервис аутентификации и авторизации",
     "platform": true
-  },
-  {
+  }, {
     "code": "userProfile",
     "name": "[Профиль] Сервис по работе с профилем пользователя",
     "platform": true
-  },
-  {
+  }, {
     "code": "clientDirectory",
     "name": "[Клиент] Справочник Клиентов Банка",
     "platform": true
-  },
-  {
+  }, {
     "code": "bankBranchDirectory",
     "name": "[Подразделение] Справочник филиалов и подразделений",
     "platform": true
-  },
-  {
+  }, {
+    "code": "settings",
+    "name": "[Настройки системы] Сервис настроек",
+    "platform": true
+  }, {
+    "code": "svetofor",
+    "name": "[Свет] Сервис \"Светофор\"",
+    "platform": true
+  }, {
+    "code": "statementImport",
+    "name": "[Импорт выписки] Сервис импорта выписки",
+    "platform": true
+  }, {
+    "code": "f1AccountsObtaining",
+    "name": "[Счета РКО Ф1] Сервис получения счетов из РКО Ф1",
+    "platform": true
+  }, {
+    "code": "backgroundProcess",
+    "name": "[СФП] Сервис фоновых процессов",
+    "platform": true
+  }, {
+    "code": "EPR",
+    "name": "[ЕПР] Сервис распознавания паспортных данных",
+    "platform": true
+  }, {
+    "code": "userAdministration",
+    "name": "[АППС] Администрирование прав пользователей системы",
+    "platform": true
+  }, {
+    "code": "accountCard",
+    "name": "[КС] Карточка счета",
+    "platform": true
+  }, {
     "code": "SBP",
     "name": "[СБП] Система быстрых платежей",
     "platform": false
-  },
-  {
+  }, {
     "code": "contractorVerification",
     "name": "[Контрагенты] Сервис проверки контрагентов",
     "platform": false
-  },
-  {
+  }, {
     "code": "ONC",
     "name": "[ОНК] Сервис Онлайн-кассы",
     "platform": false
   },
   {
-    "code": "СС",
+    "code": "CC",
     "name": "[КК] Корпоративные Карты",
+    "platform": false
+  }, {
+    "code": "DSF",
+    "name": "[ДСФ] Сервис писем",
+    "platform": false
+  }, {
+    "code": "ADM",
+    "name": "[АДМ] Сервис Онлайн Инкассация",
+    "platform": false
+  }, {
+    "code": "calendar",
+    "name": "[Календарь] Сервис \"Календарь сделок ЮЛ\"",
+    "platform": false
+  }, {
+    "code": "mainPage",
+    "name": "[ГС 2.0] Главная страница",
+    "platform": false
+  }, {
+    "code": "ONB_KZ",
+    "name": "[ОНБ_КЗ] Сервис открытия 1го счёта клиентам МСБ",
+    "platform": false
+  }, {
+    "code": "ONB",
+    "name": "[ОНБ_2021] Сервис открытия 1-го счета клиента (онбординг)",
+    "platform": false
+  }, {
+    "code": "employees",
+    "name": "[Сотрудники] Сервис управления перечнем сотрудников организации",
+    "platform": false
+  }, {
+    "code": "customerInfoUpdate",
+    "name": "[Обнов_Свед] Обновление сведений о клиенте",
+    "platform": false
+  }, {
+    "code": "accountReservation",
+    "name": "[Резерв] Сервис резервирования счетов",
+    "platform": false
+  }, {
+    "code": "clientContactNeed",
+    "name": "[НСК] Сервис \"Необходимо связаться с клиентом\"",
+    "platform": false
+  }, {
+    "code": "1stClientAccountAtBankOffice",
+    "name": "[ОНБ_ФО] Сервис открытия 1-го счета клиента в офисе Банка",
+    "platform": false
+  }, {
+    "code": "1stClientAccountAndRegisterAtSite",
+    "name": "[ОНБ_В] Сервис открытия 1-го счета и регистрации клиента во внешней части сайта",
+    "platform": false
+  }, {
+    "code": "ONB_FNS",
+    "name": "[ОНБ_ФНС] Сервис открытия 1-го счета клиента через сервис ФНС",
+    "platform": false
+  }, {
+    "code": "fieldManager",
+    "name": "[ВМ] Выездной менеджер",
+    "platform": false
+  }, {
+    "code": "o2Plus",
+    "name": "[O2+NEW] Сервис заключения ДБС и открытия дополнительного счета",
+    "platform": false
+  }, {
+    "code": "offerAcceptance",
+    "name": "[АО_РКО] Сервис акцепта оферты",
+    "platform": false
+  }, {
+    "code": "RKOservices",
+    "name": "[РКО] Сервис услуг РКО",
+    "platform": false
+  }, {
+    "code": "referenceRequest",
+    "name": "[Справки] Сервис запроса справок для ЮЛ",
+    "platform": false
+  }, {
+    "code": "AO_MP",
+    "name": "[АО_МП] Сервис подключения к ЛК МП",
+    "platform": false
+  }, {
+    "code": "LK_UVED",
+    "name": "[АО_УВЭД] Сервис подключения к ЛК УВЭД",
+    "platform": false
+  }, {
+    "code": "DSF",
+    "name": "[ДСФ_ЭКО] Сервис писем",
+    "platform": false
+  }, {
+    "code": "FNS",
+    "name": "[ФНС] Сервис по работе с ФНС",
+    "platform": false
+  }, {
+    "code": "brokerage",
+    "name": "[БРК] Брокеридж",
+    "platform": false
+  }, {
+    "code": "visaOfDocuments",
+    "name": "[Визирование] Сервис Визирования",
+    "platform": false
+  }, {
+    "code": "RKO_PP",
+    "name": "[РРКО_ПП_NEW] Рублевое платежное поручение",
+    "platform": false
+  }, {
+    "code": "RKO_Accept_PT",
+    "name": "[РРКО_Акцепт ПТ] Сервис Акцепта Платежного Требования",
+    "platform": false
+  }, {
+    "code": "RKO_Outgoing_IP",
+    "name": "[РРКО_ИПИ] Инкассовое поручение (исходящее)",
+    "platform": false
+  }, {
+    "code": "RKO_Incoming_IP",
+    "name": "[РРКО_ИПВ] Инкассовое поручение (входящее)",
+    "platform": false
+  }, {
+    "code": "RKO_Outgoing_PT",
+    "name": "[РРКО_ПТИ] Сервис Платежного Требования Исходящего",
+    "platform": false
+  }, {
+    "code": "RKO_Incoming_PT",
+    "name": "[РРКО_ПТВ] Сервис Платежного Требования Входящего",
+    "platform": false
+  }, {
+    "code": "VRKO_CurrencyTransferOrder",
+    "name": "[ВРКО_ВП] Поручение на перевод валюты",
+    "platform": false
+  }, {
+    "code": "VRKO_TransitCurrencyAccountOrder",
+    "name": "[ВРКО_ППТС] Поручение на списание средств с транзитного валютного счета",
+    "platform": false
+  }, {
+    "code": "VRKO_CurrencyConversion",
+    "name": "[ВРКО_Конв] Поручения на покупку/продажу валюты",
+    "platform": false
+  }, {
+    "code": "VRKO_CurrencyControlDocuments",
+    "name": "[ВРКО_ДВК] Документы валютного контроля",
+    "platform": false
+  }, {
+    "code": "VRKO_Import",
+    "name": "[ВРКО_Импорт] Импорт",
+    "platform": false
+  }, {
+    "code": "VRKO_Autoquoting",
+    "name": "[ВРКО_АК] Автокотирование",
+    "platform": false
+  }, {
+    "code": "paymentElectronicDocuments",
+    "name": "[ПЭД] Сервисы работы с Платежными Электронными Документами",
+    "platform": false
+  }, {
+    "code": "paymentDocumentsMonitoring",
+    "name": "Мониторинг расчетных документов",
+    "platform": false
+  }, {
+    "code": "paymentDocumentsRevocationRequest",
+    "name": "[Отзыв ПЭД] Запрос на отзыв",
+    "platform": false
+  }, {
+    "code": "blockings",
+    "name": "[Блокировки ОЭП] Сервис по работе с блокировками",
+    "platform": false
+  }, {
+    "code": "accountStatement",
+    "name": "[Выписки] Сервис работы с выпиской",
+    "platform": false
+  }, {
+    "code": "scheduledAccountStatement",
+    "name": "[ВПР_new] Выписка по расписанию",
+    "platform": false
+  }, {
+    "code": "chatBot",
+    "name": "[ЧБ] Сервисы Чат-бота",
+    "platform": false
+  }, {
+    "code": "cashRequest",
+    "name": "[Заказ наличных] Сервис обработки заявок на выдачу и внесение наличных денежных средств",
+    "platform": false
+  }, {
+    "code": "cloudAndUnqualifiedSignatureGeneration",
+    "name": "[ГЭП] Сервис генерации ОЭП/НЭП",
+    "platform": false
+  }, {
+    "code": "signatureRegistration",
+    "name": "[РЭП] Сервис регистрации НЭП/КЭП",
+    "platform": false
+  }, {
+    "code": "leasing",
+    "name": "[Лизинг] Сервис лизинга",
+    "platform": false
+  }, {
+    "code": "controlAndPaymentsAcceptance",
+    "name": "[КиА] Контроль и акцепт платежей",
+    "platform": false
+  }, {
+    "code": "accountBlocking",
+    "name": "[БлокСч] Сервис блокировок счетов",
+    "platform": false
+  }, {
+    "code": "accountClosing",
+    "name": "[ЗакрСчета] Сервис закрытия счета",
+    "platform": false
+  }, {
+    "code": "documentCoping",
+    "name": "[КопииДок] Сервис предоставления копий документов",
+    "platform": false
+  }, {
+    "code": "1CDirectBank",
+    "name": "[DirectBank] Сервис \"1C:DirectBank\"",
+    "platform": false
+  }, {
+    "code": "operationsFeed",
+    "name": "[ЛО] Сервис Лента операций",
+    "platform": false
+  }, {
+    "code": "DPP",
+    "name": "[ДПП] Сервис динамических продуктовых предложений",
+    "platform": false
+  }, {
+    "code": "paymentDocumentDirectories",
+    "name": "[СпрРКО] Справочники платежных документов",
+    "platform": false
+  }, {
+    "code": "openApi",
+    "name": "[Мультибанкинг] Сервис обмена данными через openApi",
+    "platform": false
+  }, {
+    "code": "orderQueue",
+    "name": "[Очереди РКО] Сервис очереди распоряжений",
+    "platform": false
+  }, {
+    "code": "requestWidget",
+    "name": "[Виджет_Заявки]",
     "platform": false
   }
 ]

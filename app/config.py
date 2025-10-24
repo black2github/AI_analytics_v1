@@ -9,6 +9,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL")
+OLLAMA_API_URL = os.getenv("OLLAMA_API_URL")
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
 
 CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN")
 CONFLUENCE_USER = os.getenv("CONFLUENCE_USER")
@@ -24,7 +26,7 @@ JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")  # Альтернатива пар�
 LLM_PROVIDER = os.getenv("LLM_PROVIDER")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4") # gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4-32k...
 LLM_TEMPERATURE = os.getenv("LLM_TEMPERATURE", "0.2")
-APP_VERSION = os.getenv("APP_VERSION", "0.20.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.21.0")
 
 # openai | huggingface
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "huggingface")

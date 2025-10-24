@@ -15,8 +15,8 @@ class GenerateServiceSummaryRequest(BaseModel):
     parent_page_id: str
     use_approved_only: bool = True
     custom_prompt: Optional[str] = None
-    max_tokens: int = 5000 # 50000
-    max_pages: int = 50
+    max_tokens: int = 50000 # 50000
+    max_pages: int = 500
 
 
 class GenerateServiceSummaryResponse(BaseModel):
