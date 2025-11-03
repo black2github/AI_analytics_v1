@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 def get_vectorstore(collection_name: str, embedding_model: Embeddings = None) -> Chroma:
+    logger.debug("[get_vectorstore] <- collection_name = '%s', embedding_model= '%s'", collection_name, embedding_model)
+
     if embedding_model is None:
         embedding_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 

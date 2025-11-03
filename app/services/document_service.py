@@ -126,10 +126,17 @@ class DocumentService:
         final_count = len(vectorstore.get()['ids'])
         return initial_count - final_count
 
-    def get_storage_debug_info(self) -> Dict:
+    def get_storage_info(self) -> Dict:
         """Отладочная информация о хранилище"""
+
+        logger.info("[get_storage_info] <-.")
         embeddings_model = get_embeddings_model()
         store = get_vectorstore(UNIFIED_STORAGE_NAME, embedding_model=embeddings_model)
+
+        if store is None:
+            raise ValueError("No vectorstore found.")
+
+        logger.debug("[get_storage_info] store = %s", store)
         data = store.get()
 
         # Статистика

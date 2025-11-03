@@ -131,8 +131,9 @@ async def remove_platform_pages(request: RemovePagesRequest):
 @router.get("/debug_collections", tags=["Отладка"])
 async def debug_collections():
     """Отладочная информация о едином хранилище"""
+    logger.info("[debug_collections] <-.")
     try:
-        return document_service.get_storage_debug_info()
+        return document_service.get_storage_info()
     except Exception as e:
         return {"error": str(e), "storage": "unified_requirements"}
 
@@ -140,6 +141,7 @@ async def debug_collections():
 # Сохраняем функцию remove_service_fragments для обратной совместимости с тестами
 def remove_service_fragments(page_ids: List[str]) -> int:
     """DEPRECATED: Используйте DocumentService.remove_page_fragments"""
+    logger.info("Deprecated [remove_service_fragments] <- page_ids=%s.", page_ids)
     return document_service.remove_page_fragments(page_ids)
 
 from app.page_cache import clear_page_cache, get_cache_info
@@ -147,18 +149,21 @@ from app.page_cache import clear_page_cache, get_cache_info
 @router.get("/cache_info", tags=["Кеширование"])
 async def cache_info():
     """Информация о состоянии кеша страниц"""
+    logger.info("[cache_info] <-.")
     return get_cache_info()
 
 
 @router.post("/clear_cache", tags=["Кеширование"])
 async def clear_cache():
     """Очистка кеша страниц"""
+    logger.info("[clear_cache] <-.")
     clear_page_cache()
     return {"message": "Cache cleared successfully"}
 
 @router.get("/embedding_cache_info", tags=["Кеширование"])
 async def embedding_cache_info():
     """Информация о кеше модели эмбеддингов"""
+    logger.info("[embedding_cache_info] <-.")
     cache_info = get_embeddings_cache_info()
     return {
         "hits": cache_info.hits,
@@ -170,5 +175,6 @@ async def embedding_cache_info():
 @router.post("/clear_embedding_cache", tags=["Кеширование"])
 async def clear_embedding_cache():
     """Очистка кеша модели эмбеддингов"""
+    logger.info("[clear_embedding_cache] <-.")
     clear_embeddings_cache()
     return {"message": "Embedding model cache cleared successfully"}

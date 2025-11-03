@@ -65,7 +65,7 @@ def setup_logging():
     console_handler.setFormatter(formatter)
 
     # Файловый обработчик
-    file_handler = logging.FileHandler('requirements_analyzer.log', encoding='utf-8')
+    file_handler = logging.FileHandler('rag-services.log', encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
 

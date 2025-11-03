@@ -3,14 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: rag-services:latest
     container_name: rag-services
     restart: unless-stopped
-    volumes:
-      - ./app:/app
-    ports:
-      - "8000:8000"
-    extra_hosts:
-      - "confluence.gboteam.ru:192.168.3.11"
+    #volumes:
+    #  - ./app:/app
+    #ports:
+    #  - "8000:8000"
+    #extra_hosts:
+    #  - "confluence.gboteam.ru:192.168.3.11"
     network_mode: host  # Используем сетевой стек хоста
     environment:
       - PYTHONPATH=/

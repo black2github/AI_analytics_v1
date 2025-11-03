@@ -6,6 +6,7 @@ import logging
 from app.logging_utils import set_log_level, get_current_log_level, log_sample_messages
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class LogLevelRequest(BaseModel):
@@ -15,12 +16,14 @@ class LogLevelRequest(BaseModel):
 @router.get("/log_level", tags=["Управление логированием"])
 async def get_log_level():
     """Получает текущий уровень логирования"""
+    logger.debug("[get_log_level] <-.")
     return {"current_level": get_current_log_level()}
 
 
 @router.post("/log_level", tags=["Управление логированием"])
 async def change_log_level(request: LogLevelRequest):
     """Изменяет уровень логирования"""
+    logger.debug("[change_log_level] <- level='%s'", request.level)
     valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
 
     if request.level.upper() not in valid_levels:
@@ -48,6 +51,7 @@ async def change_log_level(request: LogLevelRequest):
 @router.post("/log_test", tags=["Управление логированием"])
 async def test_logging():
     """Выводит тестовые сообщения разных уровней"""
+    logger.debug("[test_logging] <-.")
     try:
         log_sample_messages()
         return {"message": "Test log messages sent. Check logs for output."}

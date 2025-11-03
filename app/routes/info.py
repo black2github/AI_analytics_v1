@@ -19,6 +19,7 @@ router = APIRouter()
 @router.get("/info")
 def get_info():
     """Возвращает информацию о приложении."""
+    logger.debug("[get_info] <-.")
     # Динамическое вычисление uptime
     uptime_seconds = int(time.time() - START_TIME)
     uptime_timedelta = timedelta(seconds=uptime_seconds)
@@ -33,7 +34,7 @@ def get_info():
         uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     # Логирование вызова эндпоинта
-    logger.info("Info endpoint called, uptime: %s", uptime_str)
+    logger.info("[get_info] Info endpoint called, uptime: %s", uptime_str)
 
     return {
         "app": "requirements-analyzer",

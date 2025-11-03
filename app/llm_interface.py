@@ -1,5 +1,5 @@
 # app/llm_interface.py
-
+import logging
 from functools import lru_cache
 from app.config import (
     LLM_PROVIDER,
@@ -13,8 +13,10 @@ from app.config import (
     DEEPSEEK_API_URL, OLLAMA_API_URL, OLLAMA_API_KEY
 )
 
+logger = logging.getLogger(__name__)
 
 def get_llm():
+    logger.debug("[get_llm] <-.")
     if LLM_PROVIDER == "openai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
@@ -60,6 +62,7 @@ def get_embeddings_model():
     Returns:
         Кешированный объект модели эмбеддингов
     """
+    logger.debug("[get_embeddings_model] <-.")
     if EMBEDDING_PROVIDER == "openai":
         from langchain_community.embeddings import OpenAIEmbeddings
         return OpenAIEmbeddings(api_key=OPENAI_API_KEY)
@@ -73,9 +76,11 @@ def get_embeddings_model():
 
 def clear_embeddings_cache():
     """Очистка кеша модели эмбеддингов (например, при изменении конфигурации)"""
+    logger.debug("[clear_embeddings_cache] <-.")
     get_embeddings_model.cache_clear()
 
 
 def get_embeddings_cache_info():
     """Информация о кеше модели эмбеддингов"""
+    logger.debug("[get_embeddings_cache_info] <-.")
     return get_embeddings_model.cache_info()
