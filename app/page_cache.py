@@ -1,17 +1,22 @@
 # app/page_cache.py
 
 import logging
-from functools import lru_cache
 from typing import Dict, Optional
 import markdownify
 from app.confluence_loader import confluence, extract_approved_fragments
 from app.filter_all_fragments import filter_all_fragments
 from app.services.template_type_analysis import analyze_content_template_type
+from cachetools import TTLCache, cached
+from cachetools.keys import hashkey
+import threading
 
 logger = logging.getLogger(__name__)
 
+# Создаем TTL кэш: максимум 1000 элементов, время жизни 300 секунд (5 минут)
+page_cache = TTLCache(maxsize=1000, ttl=300)
+cache_lock = threading.RLock()
 
-@lru_cache(maxsize=1000)
+@cached(cache=page_cache, lock=cache_lock, key=lambda page_id: hashkey(page_id))
 def get_page_data_cached(page_id: str) -> Optional[Dict]:
     """
     Кешированная функция для получения всех данных страницы за один запрос.
