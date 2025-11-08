@@ -2,10 +2,10 @@
 
 import logging
 import re
-from typing import List, Optional, Callable, Dict, Any
+from typing import List, Optional
 from bs4 import BeautifulSoup, Tag, NavigableString
 from dataclasses import dataclass
-from app.style_utils import is_black_color, has_colored_style
+from app.utils.style_utils import is_black_color, has_colored_style
 
 logger = logging.getLogger(__name__)
 

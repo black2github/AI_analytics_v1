@@ -9,7 +9,7 @@ from langchain.chains.llm import LLMChain
 from app.config import LLM_PROVIDER, TEMPLATE_ANALYSIS_PROMPT_FILE, PAGE_ANALYSIS_PROMPT_FILE
 from app.confluence_loader import get_page_content_by_id, extract_approved_fragments
 from app.llm_interface import get_llm
-from app.style_utils import has_colored_style
+from app.utils.style_utils import has_colored_style
 
 llm = get_llm()
 logger = logging.getLogger(__name__)

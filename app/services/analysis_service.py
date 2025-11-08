@@ -55,14 +55,14 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
 
         requirements = []
         valid_page_ids = []
-        max_tokens = 65000
+        max_tokens = 128000    # 65000
         max_context_tokens = max_tokens // 2
         current_tokens = 0
         template = prompt_template or open(PAGE_ANALYSIS_PROMPT_FILE, "r", encoding="utf-8").read().strip()
         template_tokens = count_tokens(template)
 
         #
-        # ИЗМЕНЕНО: Формируем состав анализируемых требований с заголовками
+        # Формируем состав анализируемых требований с заголовками
         #
         for page_id in page_ids:
             # ИЗМЕНЕНО: Используем кешированную функцию для получения всех данных
@@ -469,7 +469,7 @@ def _parse_llm_template_response(llm_response: str) -> dict:
     parsed_result = json.loads(json_content)
 
     # Валидируем структуру ответа
-    required_sections = ["template_compliance", "content_quality", "system_integration", "recommendations", "summary"]
+    required_sections = ["template_compliance", "recommendations", "summary"]
     missing_sections = [section for section in required_sections if section not in parsed_result]
 
     if missing_sections:

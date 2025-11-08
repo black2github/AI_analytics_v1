@@ -55,10 +55,10 @@ class TemplateTypeAnalyzer:
 
         # Проверяем каждый тип шаблона
         for template_type, template_config in self.features.items():
-            logger.debug("[analyze_content_type] Checking template type: %s", template_type)
+            logger.debug("[analyze_content_type] Checking template type: '%s'", template_type)
 
             if self._check_template_match(page_title, page_content, template_config):
-                logger.info("[analyze_content_type] -> Found match: %s", template_type)
+                logger.info("[analyze_content_type] -> Found match: '%s'", template_type)
                 return template_type
 
         logger.info("[analyze_content_type] -> No template match found")
@@ -84,10 +84,10 @@ class TemplateTypeAnalyzer:
 
         template_type = self.analyze_content_type(page_title, page_html)
         if template_type:
-            logger.info("[analyze_page_type] -> Found match: %s", template_type)
+            logger.info("[analyze_page_type] -> Found match: '%s'", template_type)
         else:
             logger.info("[analyze_page_type] -> No template match found")
-        return template_type
+        return template_type.strip()
 
     def analyze_pages_types(self, page_ids: List[str]) -> List[Optional[str]]:
         """
