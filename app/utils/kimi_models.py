@@ -11,6 +11,11 @@
 # kimi-k2-0711-preview
 # kimi-k2-thinking-turbo
 # kimi-k2-thinking
+# # Для максимальной глубины анализа:
+# LLM_MODEL = "moonshotai/kimi-k2-thinking"
+# # Для production с требованием скорости:
+# LLM_MODEL = "moonshotai/kimi-k2-thinking-turbo"
+# Обе модели поддерживают до 262K контекст, инструменты (tools) и вывод reasoning-цепочек
 
 import os, sys
 from openai import OpenAI
