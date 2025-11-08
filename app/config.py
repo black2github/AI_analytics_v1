@@ -45,3 +45,6 @@ UNIFIED_STORAGE_NAME = "unified_requirements"
 
 SERVICES_REGISTRY_FILE = os.getenv("SERVICES_REGISTRY_FILE", "services.json")
 TEMPLATES_REGISTRY_FILE = os.getenv("TEMPLATES_REGISTRY_FILE", "templates.json")
+
+PAGE_CACHE_TTL = int(os.getenv("PAGE_CACHE_TTL", "300"))  # по умолчанию 5 минут
+PAGE_CACHE_SIZE = int(os.getenv("PAGE_CACHE_SIZE", "1000"))
