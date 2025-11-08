@@ -246,3 +246,33 @@ class DocumentService:
         except Exception as e:
             logger.error("[has_approved_fragments] Error: %s", str(e))
             return False
+
+    def get_large_documents_info(self, min_chars: int = 10000) -> Dict:
+        """Быстрая информация о больших документах"""
+        embeddings_model = get_embeddings_model()
+        store = get_vectorstore(UNIFIED_STORAGE_NAME, embedding_model=embeddings_model)
+
+        data = store.get()
+
+        large_docs = []
+        for doc_content, metadata in zip(data['documents'], data['metadatas']):
+            size = len(doc_content)
+            if size >= min_chars:
+                large_docs.append({
+                    'page_id': metadata.get('page_id'),
+                    'title': metadata.get('title', 'No title'),
+                    'size_chars': size,
+                    'size_tokens_estimate': size // 3,  # Оценка для русского
+                    'service_code': metadata.get('service_code')
+                })
+
+        # Сортируем по размеру
+        large_docs.sort(key=lambda x: x['size_chars'], reverse=True)
+
+        return {
+            'total_documents': len(data['documents']),
+            'large_documents_count': len(large_docs),
+            'large_documents': large_docs[:20],  # Топ-20
+            'largest_size_chars': large_docs[0]['size_chars'] if large_docs else 0,
+            'largest_size_tokens_estimate': large_docs[0]['size_tokens_estimate'] if large_docs else 0
+        }
