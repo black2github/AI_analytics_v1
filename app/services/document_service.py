@@ -159,6 +159,12 @@ class DocumentService:
                     service_code = metadata.get('service_code', 'unknown')
                     service_stats[service_code] = service_stats.get(service_code, 0) + 1
 
+        # Добавьте статистику размеров
+        content_sizes = []
+        if data.get('documents'):
+            for doc in data['documents']:
+                content_sizes.append(len(doc))
+
         return {
             "storage_name": UNIFIED_STORAGE_NAME,
             "total_documents": len(data.get('ids', [])),
@@ -166,6 +172,9 @@ class DocumentService:
             "platform_stats": platform_stats,
             "service_stats": service_stats,
             "sample_metadata": data.get('metadatas', [])[:3] if data.get('metadatas') else [],
+            "avg_document_size": sum(content_sizes) / len(content_sizes) if content_sizes else 0,
+            "max_document_size": max(content_sizes) if content_sizes else 0,
+            "documents_over_2000_chars": len([s for s in content_sizes if s > 2000]),
             "status": "ok"
         }
 
