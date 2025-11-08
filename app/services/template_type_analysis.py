@@ -59,7 +59,8 @@ class TemplateTypeAnalyzer:
 
             if self._check_template_match(page_title, page_content, template_config):
                 logger.info("[analyze_content_type] -> Found match: %s", template_type)
-                return template_type
+                # 'typeN ' -> 'typeN'
+                return template_type.strip()
 
         logger.info("[analyze_content_type] -> No template match found")
         return None

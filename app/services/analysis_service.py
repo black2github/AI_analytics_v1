@@ -62,10 +62,10 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
         template_tokens = count_tokens(template)
 
         #
-        # ИЗМЕНЕНО: Формируем состав анализируемых требований с заголовками
+        # Формируем состав анализируемых требований с заголовками
         #
         for page_id in page_ids:
-            # ИЗМЕНЕНО: Используем кешированную функцию для получения всех данных
+            # Используем кешированную функцию для получения всех данных
             page_data = get_page_data_cached(page_id)
 
             if not page_data:
@@ -80,7 +80,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
             requirement_type_name = get_template_name_by_type(
                 requirement_type_code) if requirement_type_code else "Неизвестный тип"
 
-            # ИЗМЕНЕНО: Формируем текст с заголовком
+            # Формируем текст с заголовком
             header = f"---\npage_id: {page_id}\ntitle: {title}\ntype: {requirement_type_name}\n---\n"
             page_text_with_header = header + content
 
@@ -103,11 +103,15 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
             logging.warning("[analyze_pages] No valid requirements found, service code: %s", service_code)
             return []
 
-        # ИЗМЕНЕНО: Формируем requirements_text с заголовками (убираем дублирующий Page ID)
+        #
+        # Формируем текст требований с заголовками
+        #
         requirements_text = "\n\n".join([req['content'] for req in requirements])
-        logger.debug("[analyze_pages] Resolved requirements with headers: '%s'", requirements_text)
+        logger.debug("[analyze_pages] Resolved requirements with headers: '%s'\n", requirements_text)
 
-        # Остальной код остается без изменений...
+        #
+        # Формируем контекст по страницам требований
+        #
         context = build_context_optimized(service_code, requirements_text=requirements_text, exclude_page_ids=page_ids)
 
         context_tokens = count_tokens(context)
@@ -129,14 +133,16 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
             logging.warning("[analyze_pages] Total tokens (%d) exceed limit (%d)", total_tokens, max_tokens)
             return [{"page_id": pid, "analysis": "Анализ невозможен: превышен лимит токенов"} for pid in valid_page_ids]
 
-        # Основной анализ требований - остается без изменений
+        # Инициализация цепочки
         chain = build_chain(prompt_template)
         try:
-
+            #
+            # Собственно анализ требований через обращение к LLM
+            #
             result = chain.run({"requirement": requirements_text, "context": context})
             logger.debug("[analyze_pages] Raw LLM response: '%s'", result)
 
-            # Остальной код парсинга результата остается без изменений...
+            # Парсим результата
             cleaned_result = _extract_json_from_llm_response(result)
             if not cleaned_result:
                 logger.error("[analyze_pages] No valid JSON found in LLM response")
@@ -190,7 +196,7 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
         service_code: Код сервиса
 
     Returns:
-        Результат анализа шаблона или None
+        Результат соответствия страницы шаблону или None (не нужно), если требования страницы уже еть среди одобренных.
     """
     logger.info("[_analyze_page_template_if_needed] <- Checking page_id: %s", page_id)
 
@@ -199,7 +205,8 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
         from app.services.document_service import DocumentService
         from app.services.template_type_analysis import analyze_page_template_type
 
-        # Проверяем наличие одобренных фрагментов
+        # Проверяем наличие одобренных фрагментов.
+        # Если есть - страница уже анализировалась по шаблону ранее.
         document_service = DocumentService()
         has_fragments = document_service.has_approved_fragments([page_id])
 
@@ -230,6 +237,7 @@ def _analyze_page_template_if_needed(page_id: str, service_code: str) -> Optiona
         }]
 
         # Проводим анализ соответствия шаблону
+        # TODO оставить только проверку соответствия шаблону, так как сами требования проверили ранее.
         template_analysis_results = analyze_with_templates(
             items=template_analysis_items,
             service_code=service_code
@@ -267,7 +275,8 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
                            service_code: Optional[str] = None):
     """
     Анализирует новые требования и их соответствие шаблонам с передачей шаблона в LLM.
-    ИЗМЕНЕНО: Добавляет заголовки к содержимому страниц.
+    Добавляет заголовки к содержимому страниц.
+    TODO оставить только проверку соответствия шаблону, проверку требования - убрать.
     """
     logger.info("[analyze_with_templates] <- items count: %d, service_code: %s", len(items), service_code)
 
@@ -287,9 +296,9 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
         requirement_type = item["requirement_type"]
         page_id = item["page_id"]
 
-        logger.info("[analyze_with_templates] Processing page_id: %s, type: %s", page_id, requirement_type)
+        logger.info("[analyze_with_templates] Processing page_id: '%s', type: '%s'", page_id, requirement_type)
 
-        # ИЗМЕНЕНО: Получаем все данные страницы через кеш
+        # Получаем все данные страницы через кеш
         page_data = get_page_data_cached(page_id)
 
         if not page_data:
@@ -341,7 +350,7 @@ def analyze_with_templates(items: List[dict], prompt_template: Optional[str] = N
                 "[analyze_with_templates] Sending to LLM: template=%d chars, content=%d chars, context=%d chars",
                 len(template_content), len(content), len(context))
 
-            # ИЗМЕНЕНО: Отправляем содержимое с заголовком
+            # Отправляем содержимое с заголовком
             llm_result = template_chain.run({
                 "requirement": content,  # Теперь включает заголовок
                 "template": template_content,
@@ -404,7 +413,7 @@ def _extract_json_from_llm_response(response: str) -> Optional[str]:
     response = response.strip()
     response = response.strip("```json").strip("```").strip()
 
-    # ИСПРАВЛЕНИЕ: Исправляем порядок и жадность паттернов
+    # Исправляем порядок и жадность паттернов
     json_patterns = [
         # 1. ИСПРАВЛЕНО: Жадный поиск JSON в markdown блоке
         r'```json\s*(\{.*\})\s*```',  # БЫЛО: (\{.*?\}) - СТАЛО: (\{.*\})
@@ -469,7 +478,8 @@ def _parse_llm_template_response(llm_response: str) -> dict:
     parsed_result = json.loads(json_content)
 
     # Валидируем структуру ответа
-    required_sections = ["template_compliance", "content_quality", "system_integration", "recommendations", "summary"]
+    # required_sections = ["template_compliance", "content_quality", "system_integration", "recommendations", "summary"]
+    required_sections = ["template_compliance"]
     missing_sections = [section for section in required_sections if section not in parsed_result]
 
     if missing_sections:

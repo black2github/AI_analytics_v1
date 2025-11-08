@@ -1,6 +1,7 @@
 # app/page_cache.py
 
 import logging
+import time
 from functools import lru_cache
 from typing import Dict, Optional
 import markdownify
@@ -23,10 +24,13 @@ def get_page_data_cached(page_id: str) -> Optional[Dict]:
         Словарь с полными данными страницы или None при ошибке
     """
     logger.debug("[get_page_data_cached] <- page_id=%s", page_id)
+    start_time = time.time()
 
     try:
         # Единственный запрос к Confluence API
         page = confluence.get_page_by_id(page_id, expand='body.storage,title')
+        elapsed = time.time() - start_time
+        logger.debug(f"[get_page_data_cached] Fetched page {page_id} in {elapsed:.2f}s")
 
         if not page:
             logger.warning("[get_page_data_cached] Page not found: %s", page_id)

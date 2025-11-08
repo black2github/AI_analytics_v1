@@ -3,7 +3,7 @@
 import logging
 from typing import List, Dict, Optional
 from atlassian import Confluence
-from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
+from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD, CONFLUENCE_TIMEOUT
 from app.filter_approved_fragments import filter_approved_fragments
 
 if CONFLUENCE_BASE_URL is None:
@@ -12,7 +12,8 @@ if CONFLUENCE_BASE_URL is None:
 confluence = Confluence(
     url=CONFLUENCE_BASE_URL,
     username=CONFLUENCE_USER,
-    password=CONFLUENCE_PASSWORD
+    password=CONFLUENCE_PASSWORD,
+    timeout=CONFLUENCE_TIMEOUT
 )
 
 logger = logging.getLogger(__name__)

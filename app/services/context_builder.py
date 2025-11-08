@@ -134,7 +134,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
     current_tokens = 0
 
     #
-    # 1. ТОЧНЫЕ СОВПАДЕНИЯ (высший приоритет)
+    # 1. ТОЧНЫЕ СОВПАДЕНИЯ (высший приоритет). (!) Из-за ограничений кол-ва зависит от порядка страниц.
     #
     entity_names = extract_entity_names_from_requirements(requirements_text)
     if entity_names and len(context_docs) < MAX_DOCS_TOTAL:
@@ -155,8 +155,10 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
                 break
     logger.debug("[build_context_optimized] step1 passed: exact matched docs = %d", len(context_docs))
 
+    # # Пункты 2. и 3. далее требуют обращения к LLM для формирования запросов поиска по векторной базе.
+    # # Пока закоментированы для увеличения скорости ответа.
     # #
-    # # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место)
+    # # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место).
     # #
     # if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
     #     search_queries = _prepare_search_queries(requirements_text)
@@ -210,7 +212,7 @@ def build_context_optimized(service_code: str, requirements_text: str = "",
     # logger.debug("[build_context_optimized] step3 passed: total docs (including platform's) = %d", len(context_docs))
 
     #
-    # 4. СВЯЗАННЫЕ ДОКУМЕНТЫ (только если совсем мало контекста)
+    # 4. СВЯЗАННЫЕ ДОКУМЕНТЫ (только если совсем мало контекста). (!) Из-за ограничений кол-ва зависит от порядка страниц.
     #
     if len(context_docs) < 5 and exclude_page_ids:  # Только если мало нашли
         linked_docs = _extract_linked_context_optimized(exclude_page_ids)

@@ -10,7 +10,11 @@ from app.config import (
     EMBEDDING_PROVIDER,
     EMBEDDING_MODEL,
     DEEPSEEK_API_KEY,
-    DEEPSEEK_API_URL, OLLAMA_API_URL, OLLAMA_API_KEY
+    DEEPSEEK_API_URL,
+    OLLAMA_API_URL,
+    OLLAMA_API_KEY,
+    KIMI_API_KEY,
+    KIMI_API_URL
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,15 @@ def get_llm():
             temperature=float(LLM_TEMPERATURE),
             api_key=OLLAMA_API_KEY,
             base_url=OLLAMA_API_URL
+        )
+
+    elif LLM_PROVIDER == "kimi":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=LLM_MODEL,
+            temperature=float(LLM_TEMPERATURE),
+            api_key=KIMI_API_KEY,
+            base_url=KIMI_API_URL
         )
 
     raise ValueError(f"Unsupported LLM provider: {LLM_PROVIDER}")
