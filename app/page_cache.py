@@ -3,6 +3,8 @@
 import logging
 from typing import Dict, Optional
 import markdownify
+
+from app.config import PAGE_CACHE_SIZE, PAGE_CACHE_TTL
 from app.confluence_loader import confluence, extract_approved_fragments
 from app.filter_all_fragments import filter_all_fragments
 from app.services.template_type_analysis import analyze_content_template_type
@@ -13,7 +15,7 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Создаем TTL кэш: максимум 1000 элементов, время жизни 300 секунд (5 минут)
-page_cache = TTLCache(maxsize=1000, ttl=300)
+page_cache = TTLCache(maxsize=PAGE_CACHE_SIZE, ttl=PAGE_CACHE_TTL)
 cache_lock = threading.RLock()
 
 @cached(cache=page_cache, lock=cache_lock, key=lambda page_id: hashkey(page_id))
