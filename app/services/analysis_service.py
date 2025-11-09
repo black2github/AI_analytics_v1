@@ -55,7 +55,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
 
         requirements = []
         valid_page_ids = []
-        max_tokens = 128000    # 65000
+        max_tokens = 65000
         max_context_tokens = max_tokens // 2
         current_tokens = 0
         template = prompt_template or open(PAGE_ANALYSIS_PROMPT_FILE, "r", encoding="utf-8").read().strip()
