@@ -14,7 +14,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-# Создаем TTL кэш: максимум 1000 элементов, время жизни 300 секунд (5 минут)
+# Создаем TTL кэш: максимум PAGE_CACHE_SIZE элементов, время жизни PAGE_CACHE_TTL секунд
 page_cache = TTLCache(maxsize=PAGE_CACHE_SIZE, ttl=PAGE_CACHE_TTL)
 cache_lock = threading.RLock()
 
