@@ -172,6 +172,7 @@ class DocumentService:
             "platform_stats": platform_stats,
             "service_stats": service_stats,
             "sample_metadata": data.get('metadatas', [])[:3] if data.get('metadatas') else [],
+            # size in chars
             "avg_document_size": sum(content_sizes) / len(content_sizes) if content_sizes else 0,
             "max_document_size": max(content_sizes) if content_sizes else 0,
             "documents_over_2000_chars": len([s for s in content_sizes if s > 2000]),

@@ -3,7 +3,7 @@
 import logging
 import sys
 
-MAX_CHARS_SIZE = 16000
+MAX_CHARS_SIZE = 64000
 
 class TrimFilter(logging.Filter):
     """

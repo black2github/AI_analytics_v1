@@ -1,11 +1,14 @@
 # app/embedding_store.py
 
 import logging
+from pprint import pformat
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
-from app.config import CHROMA_PERSIST_DIR, EMBEDDING_MODEL, EMBEDDING_PROVIDER, OPENAI_API_KEY, UNIFIED_STORAGE_NAME
+from app.config import CHROMA_PERSIST_DIR, EMBEDDING_MODEL, EMBEDDING_PROVIDER, OPENAI_API_KEY, UNIFIED_STORAGE_NAME, \
+    CHUNK_MAX_PAGE_SIZE, CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_MODE
 from app.service_registry import get_platform_status
 
 logger = logging.getLogger(__name__)
@@ -41,16 +44,43 @@ def prepare_unified_documents(
         service_code: str,
         doc_type: str = "requirement",
         requirement_type: str = None,
-        source: str = "DBOCORPESPLN"
+        source: str = "DBOCORPESPLN",
+        # НОВЫЕ ПАРАМЕТРЫ
+        chunk_strategy: str = CHUNK_MODE,
+        max_full_page_size: int = CHUNK_MAX_PAGE_SIZE,
+        chunk_size: int = CHUNK_SIZE,
+        chunk_overlap: int = CHUNK_OVERLAP,
 ) -> list[Document]:
     """
     Создает документы для единого хранилища с новой схемой метаданных.
+    Адаптивная стратегия chunking:
+    - Маленькие страницы (< CHUNK_MAX_PAGE_SIZE chars) → целиком
+    - Средние страницы (CHUNK_MAX_PAGE_SIZE-10000 chars) → chunking с overlap
+    - Огромные страницы (> 10000 chars) → принудительный chunking
     """
-    logger.debug("[prepare_unified_documents] <- Processing %d pages, service_code='%s', doc_type='%s'",
-                 len(pages), service_code, doc_type)
+    logger.debug("[prepare_unified_documents] <- Processing %d pages, service_code='%s', doc_type='%s', strategy=%s",
+                 len(pages), service_code, doc_type, chunk_strategy)
+
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+    # Инициализируем splitter
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n## ", "\n\n### ", "\n\n", "\n", ". ", " ", ""],
+        length_function=len
+    )
 
     docs = []
     is_platform = get_platform_status(service_code) if doc_type == "requirement" else False
+
+    # Инициализируем splitter
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n## ", "\n\n### ", "\n\n", "\n", ". ", " ", ""],
+        length_function=len
+    )
 
     for page in pages:
         content = page.get("approved_content", "")
@@ -58,32 +88,81 @@ def prepare_unified_documents(
             logger.warning("[prepare_unified_documents] No approved content for page %s", page.get("id"))
             continue
 
-        # Создаем метаданные по новой схеме
-        metadata = {
+        content = content.strip()
+        content_length = len(content)
+
+        # Базовые метаданные
+        base_metadata = {
             "doc_type": doc_type,
             "is_platform": is_platform,
             "service_code": service_code,
             "title": page["title"],
             "source": source,
-            "page_id": page["id"]
+            "page_id": page["id"],
+            "original_page_size": content_length
         }
 
-        # ИЗМЕНЯЕМ ЛОГИКУ ДОБАВЛЕНИЯ requirement_type
         if requirement_type:
-            # Приоритет у параметра метода
-            metadata["requirement_type"] = requirement_type
+            base_metadata["requirement_type"] = requirement_type
         elif page.get("requirement_type"):
-            # Используем тип из страницы
-            metadata["requirement_type"] = page["requirement_type"]
-        # Если ни того, ни другого нет - оставляем без requirement_type
+            base_metadata["requirement_type"] = page["requirement_type"]
 
-        logger.debug("[prepare_unified_documents] Creating doc: page_id=%s, title='%s', requirement_type='%s'",
-                     page["id"], page["title"], metadata.get("requirement_type"))
+        #
+        # Всегда полные страницы
+        #
+        if chunk_strategy == "none":
+            # Всегда целая страница
+            doc = Document(page_content=content, metadata={**base_metadata, "is_full_page": True})
+            docs.append(doc)
+            logger.debug("[prepare_unified_documents] Added full page: %s (%d chars). Metadata:\n%s",
+                         page["id"], content_length, pformat(metadata={**base_metadata, "is_full_page": True}, indent=4))
+        #
+        # АДАПТИВНАЯ СТРАТЕГИЯ
+        #
+        elif chunk_strategy == "adaptive":
+            # Маленькие страницы → целиком
+            if content_length <= max_full_page_size:
+                doc = Document(page_content=content, metadata={**base_metadata, "is_full_page": True})
+                docs.append(doc)
+                logger.debug("[prepare_unified_documents] Small page kept whole: %s (%d chars)",
+                             page["id"], content_length)
 
-        doc = Document(page_content=content.strip(), metadata=metadata)
-        docs.append(doc)
+            # Средние и большие → chunking
+            else:
+                chunks = text_splitter.split_text(content)
+                logger.info("[prepare_unified_documents] Splitting large page %s (%d chars) into %d chunks",
+                            page["id"], content_length, len(chunks))
 
-    logger.info("[prepare_unified_documents] -> Created %d documents for unified storage", len(docs))
+                for i, chunk in enumerate(chunks):
+                    chunk_metadata = {
+                        **base_metadata,
+                        "is_full_page": False,
+                        "chunk_index": i,
+                        "total_chunks": len(chunks),
+                        "title": f"{page['title']} [часть {i + 1}/{len(chunks)}]"
+                    }
+                    doc = Document(page_content=chunk, metadata=chunk_metadata)
+                    docs.append(doc)
+                logger.debug("[prepare_unified_documents] Creating doc: Metadata:\n%s", pformat(metadata, indent=4))
+                logger.debug("[prepare_unified_documents] Created %d chunks for page %s",
+                             len(chunks), page["id"])
+
+        #
+        # Принудительный chunking для всех
+        #
+        elif chunk_strategy == "fixed":
+            chunks = text_splitter.split_text(content)
+            for i, chunk in enumerate(chunks):
+                chunk_metadata = {
+                    **base_metadata,
+                    "is_full_page": False,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks)
+                }
+                doc = Document(page_content=chunk, metadata=chunk_metadata)
+                docs.append(doc)
+
+    logger.info("[prepare_unified_documents] -> Created %d documents total (inc. chunks)", len(docs))
     return docs
 
 

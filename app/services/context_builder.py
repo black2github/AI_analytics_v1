@@ -2,7 +2,7 @@
 
 from typing import Optional, List
 from langchain_core.documents import Document  # ДОБАВЛЯЕМ ИМПОРТ
-from app.config import UNIFIED_STORAGE_NAME
+from app.config import UNIFIED_STORAGE_NAME, LLM_CONTEXT_SIZE
 from app.confluence_loader import get_page_content_by_id
 from app.embedding_store import get_vectorstore
 from app.llm_interface import get_embeddings_model
@@ -115,20 +115,28 @@ def build_context(service_code: str, requirements_text: str = "", exclude_page_i
     return context
 
 
-def build_context_optimized(service_code: str, requirements_text: str = "",
-                            exclude_page_ids: Optional[List[str]] = None):
+def build_context_optimized(
+        service_code: str,
+        requirements_text: str = "",
+        exclude_page_ids: Optional[List[str]] = None,
+        llm_context_size: int = LLM_CONTEXT_SIZE
+):
     """
-    ОПТИМИЗИРОВАННАЯ версия с умным ограничением контекста
+    ОПТИМИЗИРОВАННАЯ версия с умным ограничением контекста и учетом размера контекста LLM
     """
-    logger.info("[build_context_optimized] <- service_code=%s, requirements_length=%d, exclude_pages=%d",
-                service_code, len(requirements_text), len(exclude_page_ids or []))
+    logger.info("[build_context_optimized] <- service_code=%s, requirements_length=%d, exclude_pages=%d, llm_context_size=%d",
+                service_code, len(requirements_text), len(exclude_page_ids or []), llm_context_size)
 
     embeddings_model = get_embeddings_model()
 
     # Настройки ограничений
     MAX_DOCS_TOTAL = 15  # Максимум документов в контексте
-    # MAX_DOCS_TOTAL = 2  # Максимум документов в контексте
+
     MAX_TOKENS_TOTAL = 14000  # Резерв для обрезки
+
+    # АДАПТИВНЫЕ НАСТРОЙКИ под LLM
+    # Резервируем: 1000 для промпта, 2000 для ответа
+    MAX_TOKENS_CONTEXT = llm_context_size - 3000
 
     context_docs = []
     current_tokens = 0

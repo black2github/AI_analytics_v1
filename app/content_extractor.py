@@ -53,10 +53,17 @@ class ContentExtractor:
     def _process_table(self, element: Tag, context: str) -> str:
         """
         ИСПРАВЛЕНО: Обработка таблиц с правильным порядком заголовков
+        Таблицы внутри ячеек других таблиц конвертируются в HTML
         """
         if not self.config.format_tables:
             return self._process_text_container(element, context)
 
+        # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Если таблица находится внутри ячейки другой таблицы,
+        # конвертируем её в HTML вместо Markdown
+        if context in ["table_cell", "nested_table_cell"]:
+            return self._process_nested_table_to_html(element)
+
+        # Для обычного контекста - создаём Markdown таблицу
         # ИСПРАВЛЕНИЕ: Собираем строки в правильном порядке
         table_rows = []
 
@@ -706,9 +713,13 @@ class ContentExtractor:
         return ""
 
     def _process_table_cell(self, element: Tag, context: str) -> str:
-        """Обработка ячейки таблицы"""
+        """
+        ИСПРАВЛЕНО: Обработка ячейки таблицы - исключает двойную обработку вложенных таблиц
+        """
         nested_table = element.find("table")
         if nested_table:
+            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Если есть вложенная таблица, сразу возвращаем результат
+            # и НЕ продолжаем дальнейшую обработку через structural_elements
             return self._process_cell_with_nested_table(element, nested_table, context)
 
         structural_elements = element.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "div", "p"],
@@ -741,25 +752,36 @@ class ContentExtractor:
             return self._process_children(element, "table_cell")
 
     def _process_cell_with_nested_table(self, cell: Tag, nested_table: Tag, context: str) -> str:
-        """Обработка ячейки с вложенной таблицей"""
+        """
+        ИСПРАВЛЕНО: Обработка ячейки с вложенной таблицей
+        Исключает двойную обработку вложенной таблицы
+        """
         result_parts = []
 
+        # ИСПРАВЛЕНИЕ: Обрабатываем только текст и элементы ДО таблицы
+        # НЕ обрабатываем контейнеры, содержащие таблицу
         text_before = ""
         for child in cell.children:
             if child == nested_table:
                 break
+            # ИСПРАВЛЕНИЕ: Проверяем, не содержит ли дочерний элемент таблицу
             if isinstance(child, NavigableString):
                 text_before += str(child)
-            elif isinstance(child, Tag) and child.name != "table":
-                text_before += self._process_element(child, "table_cell")
+            elif isinstance(child, Tag):
+                if child.name != "table" and not child.find("table"):
+                    # Элемент НЕ содержит таблицу - обрабатываем
+                    text_before += self._process_element(child, "table_cell")
+                # Если элемент содержит таблицу - пропускаем, она будет обработана отдельно
 
         if text_before:
             result_parts.append(text_before)
 
+        # Обрабатываем саму вложенную таблицу
         nested_html = self._process_nested_table_to_html(nested_table)
         if nested_html:
             result_parts.append(f"**Таблица:** {nested_html}")
 
+        # ИСПРАВЛЕНИЕ: Обрабатываем текст и элементы ПОСЛЕ таблицы
         text_after = ""
         found_table = False
         for child in cell.children:
@@ -769,8 +791,10 @@ class ContentExtractor:
             if found_table:
                 if isinstance(child, NavigableString):
                     text_after += str(child)
-                elif isinstance(child, Tag) and child.name != "table":
-                    text_after += self._process_element(child, "table_cell")
+                elif isinstance(child, Tag):
+                    if child.name != "table" and not child.find("table"):
+                        # Элемент НЕ содержит таблицу - обрабатываем
+                        text_after += self._process_element(child, "table_cell")
 
         if text_after:
             result_parts.append(text_after)
@@ -778,7 +802,9 @@ class ContentExtractor:
         return " ".join(result_parts)
 
     def _process_nested_table_to_html(self, table: Tag) -> str:
-        """Преобразование вложенной таблицы в HTML"""
+        """
+        ИСПРАВЛЕНО: Преобразование вложенной таблицы в HTML с обработкой глубокой вложенности
+        """
         rows = table.find_all("tr", recursive=False)
         if not rows:
             tbody = table.find("tbody")
@@ -807,7 +833,10 @@ class ContentExtractor:
                     attrs.append(f'colspan="{cell["colspan"]}"')
 
                 attrs_str = " " + " ".join(attrs) if attrs else ""
-                cell_content = self._process_children(cell, "nested_table_cell")
+
+                # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Обрабатываем содержимое ячейки специальным методом
+                # который конвертирует вложенные таблицы в HTML вместо Markdown
+                cell_content = self._process_nested_table_cell_content(cell)
                 row_parts.append(f"<{tag_name}{attrs_str}>{cell_content}</{tag_name}>")
 
             row_parts.append("</tr>")
@@ -815,6 +844,56 @@ class ContentExtractor:
 
         html_parts.append("</table>")
         return "".join(html_parts)
+
+    def _process_nested_table_cell_content(self, cell: Tag) -> str:
+        """
+        ИСПРАВЛЕНО: Обработка содержимого ячейки вложенной таблицы.
+        Конвертирует вложенные таблицы в HTML, а не в Markdown.
+        ДОБАВЛЕНА цветовая фильтрация для режима "только подтвержденные"
+        """
+        result_parts = []
+
+        for child in cell.children:
+            if isinstance(child, NavigableString):
+                text = str(child)
+                if text:
+                    text = text.replace('\u00a0', ' ')
+                    result_parts.append(text)
+            elif isinstance(child, Tag):
+                if self._is_ignored_element(child):
+                    continue
+
+                # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Применяем цветовую фильтрацию
+                if not self._should_include_element(child):
+                    if not self.config.include_colored:
+                        # Элемент цветной - пытаемся извлечь черные части
+                        black_content = self._extract_black_elements_from_colored_container(child, "nested_table_cell")
+                        if black_content:
+                            result_parts.append(black_content)
+                    continue
+
+                # Элемент прошел цветовую фильтрацию - обрабатываем
+                if child.name == "table":
+                    # Таблицу конвертируем в HTML рекурсивно
+                    nested_html = self._process_nested_table_to_html(child)
+                    if nested_html:
+                        result_parts.append(nested_html)
+                elif child.name == "br":
+                    result_parts.append("\n")
+                elif child.name == "p":
+                    # Обрабатываем параграфы внутри ячеек
+                    p_content = self._process_nested_table_cell_content(child)
+                    if p_content:
+                        result_parts.append(p_content)
+                        if not p_content.endswith('\n'):
+                            result_parts.append('\n')
+                else:
+                    # Для остальных элементов рекурсивно обрабатываем содержимое
+                    child_content = self._process_nested_table_cell_content(child)
+                    if child_content:
+                        result_parts.append(child_content)
+
+        return "".join(result_parts)
 
     def _process_list_item(self, element: Tag, context: str) -> str:
         """Обработка элемента списка"""
