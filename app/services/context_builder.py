@@ -129,11 +129,10 @@ def build_context_optimized(
 
     embeddings_model = get_embeddings_model()
 
+    # TODO секцию ниже нужно заменить на получение параметров извне, где динамически посчитаны все размеры.
     # Настройки ограничений
     MAX_DOCS_TOTAL = 15  # Максимум документов в контексте
-
     MAX_TOKENS_TOTAL = 14000  # Резерв для обрезки
-
     # АДАПТИВНЫЕ НАСТРОЙКИ под LLM
     # Резервируем: 1000 для промпта, 2000 для ответа
     MAX_TOKENS_CONTEXT = llm_context_size - 3000
@@ -359,7 +358,7 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Docum
 def unified_service_search(queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
                            k_per_query: int, embeddings_model) -> List[Document]:
     """
-    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
+    Возвращает список Document объектов вместо строк.
     Поиск требований конкретного сервиса в едином хранилище.
     """
     logger.debug("[unified_service_search] <- %d queries for service_code='%s'", len(queries), service_code)
@@ -398,7 +397,7 @@ def unified_platform_search(queries: List[str], exclude_page_ids: Optional[List[
                             k_per_query: int, embeddings_model, exclude_services: Optional[List[str]] = None) -> List[
     Document]:
     """
-    ИЗМЕНЕНО: Теперь возвращает список Document объектов вместо строк.
+    Возвращает список Document объектов вместо строк.
     Поиск платформенных требований в едином хранилище.
     """
     logger.debug("[unified_platform_search] <- %d queries, exclude_services=%s", len(queries), exclude_services)
@@ -472,7 +471,7 @@ def unified_platform_search(queries: List[str], exclude_page_ids: Optional[List[
 
 def _fast_deduplicate_documents(docs: List[Document]) -> List[Document]:
     """
-    ИЗМЕНЕНО: Теперь принимает и возвращает Document объекты.
+    Принимает и возвращает Document объекты.
     Быстрая дедупликация документов
     """
     seen_composite_keys = set()
@@ -511,11 +510,13 @@ def _prepare_search_queries(requirements_text: str) -> List[str]:
 
 def _smart_truncate_context(context: str, max_length: int) -> str:
     """Умное обрезание контекста по границам предложений"""
+    # TODO похоже стоит использовать RecursiveCharacterTextSplitter
     if len(context) <= max_length:
+
         return context
 
     truncated = context[:max_length]
-    last_period = truncated.rfind('.')
+    last_period = truncated.rfind('. ')
     if last_period > max_length * 0.8:
         truncated = truncated[:last_period + 1]
 
