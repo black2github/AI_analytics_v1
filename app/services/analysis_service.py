@@ -14,7 +14,7 @@ from app.service_registry import resolve_service_code_by_user, resolve_service_c
 from app.services.context_builder import build_context, build_context_optimized
 from app.template_registry import get_template_by_type
 
-# Определение размера контекста для разных моделей
+# Определение размера контекста в токенах для разных моделей
 LLM_CONTEXT_SIZES = {
     'llama3.2:3b': 8000,
     'llama3.2:1b': 4000,
@@ -121,7 +121,7 @@ def truncate_smart(text: str, max_tokens: int, preserve_start: bool = True) -> s
     Returns:
         Обрезанный текст
     """
-    logger.info("[truncate_smart] <- text: %s", text)
+    logger.debug("[truncate_smart] <- text: %s", text)
 
     current_tokens = count_tokens(text)
 
@@ -202,7 +202,7 @@ def analyze_pages(page_ids: List[str], prompt_template: Optional[str] = None,
 
         requirements = []
         valid_page_ids = []
-        max_tokens = LLM_CONTEXT_SIZE
+        max_tokens = LLM_CONTEXT_SIZE # TODO заменить на get_llm_context_size()
         # декларативным образом считаем, что половина контекста запроса требуется под контекст требований
         max_context_tokens = max_tokens // 2
         current_tokens = 0
