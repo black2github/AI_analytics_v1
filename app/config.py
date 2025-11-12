@@ -30,7 +30,7 @@ JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")  # Альтернатива пар�
 LLM_PROVIDER = os.getenv("LLM_PROVIDER")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4") # gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4-32k...
 LLM_TEMPERATURE = os.getenv("LLM_TEMPERATURE", "0.2")
-LLM_CONTEXT_SIZE = 65000
+LLM_CONTEXT_SIZE = 128000
 
 # openai | huggingface
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "huggingface")
