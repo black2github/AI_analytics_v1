@@ -754,25 +754,12 @@ class ContentExtractor:
     def _process_cell_with_nested_table(self, cell: Tag, nested_table: Tag, context: str) -> str:
         """
         ИСПРАВЛЕНО: Обработка ячейки с вложенной таблицей
-        Исключает двойную обработку вложенной таблицы
+        Извлекает весь контент до и после таблицы, включая контент из контейнеров
         """
         result_parts = []
 
-        # ИСПРАВЛЕНИЕ: Обрабатываем только текст и элементы ДО таблицы
-        # НЕ обрабатываем контейнеры, содержащие таблицу
-        text_before = ""
-        for child in cell.children:
-            if child == nested_table:
-                break
-            # ИСПРАВЛЕНИЕ: Проверяем, не содержит ли дочерний элемент таблицу
-            if isinstance(child, NavigableString):
-                text_before += str(child)
-            elif isinstance(child, Tag):
-                if child.name != "table" and not child.find("table"):
-                    # Элемент НЕ содержит таблицу - обрабатываем
-                    text_before += self._process_element(child, "table_cell")
-                # Если элемент содержит таблицу - пропускаем, она будет обработана отдельно
-
+        # ИСПРАВЛЕНИЕ: Собираем весь контент до таблицы, включая из контейнеров
+        text_before = self._extract_content_before_table(cell, nested_table, context)
         if text_before:
             result_parts.append(text_before)
 
@@ -781,25 +768,91 @@ class ContentExtractor:
         if nested_html:
             result_parts.append(f"**Таблица:** {nested_html}")
 
-        # ИСПРАВЛЕНИЕ: Обрабатываем текст и элементы ПОСЛЕ таблицы
-        text_after = ""
-        found_table = False
-        for child in cell.children:
-            if child == nested_table:
-                found_table = True
-                continue
-            if found_table:
-                if isinstance(child, NavigableString):
-                    text_after += str(child)
-                elif isinstance(child, Tag):
-                    if child.name != "table" and not child.find("table"):
-                        # Элемент НЕ содержит таблицу - обрабатываем
-                        text_after += self._process_element(child, "table_cell")
-
+        # ИСПРАВЛЕНИЕ: Собираем весь контент после таблицы
+        text_after = self._extract_content_after_table(cell, nested_table, context)
         if text_after:
             result_parts.append(text_after)
 
         return " ".join(result_parts)
+
+    def _extract_content_before_table(self, cell: Tag, target_table: Tag, context: str) -> str:
+        """
+        НОВЫЙ МЕТОД: Извлекает весь контент ДО таблицы, включая из контейнеров
+        """
+        result_parts = []
+
+        def extract_until_table(element, target):
+            """Рекурсивно извлекает контент до таблицы"""
+            for child in element.children:
+                # Если нашли целевую таблицу - останавливаемся
+                if child == target:
+                    return True
+
+                if isinstance(child, NavigableString):
+                    text = str(child)
+                    if text:
+                        result_parts.append(text)
+                elif isinstance(child, Tag):
+                    # Если это таблица (но не наша целевая) - пропускаем
+                    if child.name == "table":
+                        continue
+
+                    # Если элемент содержит целевую таблицу - рекурсивно обрабатываем
+                    if child.find(lambda t: t == target):
+                        found = extract_until_table(child, target)
+                        if found:
+                            return True
+                    else:
+                        # Элемент не содержит таблицу - обрабатываем полностью
+                        content = self._process_element(child, context)
+                        if content:
+                            result_parts.append(content)
+
+            return False
+
+        extract_until_table(cell, target_table)
+        return "".join(result_parts)
+
+    def _extract_content_after_table(self, cell: Tag, target_table: Tag, context: str) -> str:
+        """
+        НОВЫЙ МЕТОД: Извлекает весь контент ПОСЛЕ таблицы
+        """
+        result_parts = []
+        found_table = False
+
+        def extract_after_table(element, target):
+            """Рекурсивно извлекает контент после таблицы"""
+            nonlocal found_table
+
+            for child in element.children:
+                # Отмечаем, что нашли целевую таблицу
+                if child == target:
+                    found_table = True
+                    continue
+
+                # Если ещё не нашли таблицу
+                if not found_table:
+                    # Если элемент содержит целевую таблицу - рекурсивно ищем
+                    if isinstance(child, Tag) and child.find(lambda t: t == target):
+                        extract_after_table(child, target)
+                    continue
+
+                # Уже после таблицы - собираем контент
+                if isinstance(child, NavigableString):
+                    text = str(child)
+                    if text:
+                        result_parts.append(text)
+                elif isinstance(child, Tag):
+                    # Если это другая таблица - пропускаем
+                    if child.name == "table":
+                        continue
+
+                    content = self._process_element(child, context)
+                    if content:
+                        result_parts.append(content)
+
+        extract_after_table(cell, target_table)
+        return "".join(result_parts)
 
     def _process_nested_table_to_html(self, table: Tag) -> str:
         """
@@ -863,8 +916,10 @@ class ContentExtractor:
                 if self._is_ignored_element(child):
                     continue
 
-                # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Применяем цветовую фильтрацию
-                if not self._should_include_element(child):
+                should_include = self._should_include_element(child)
+
+                # Применяем цветовую фильтрацию
+                if not should_include:
                     if not self.config.include_colored:
                         # Элемент цветной - пытаемся извлечь черные части
                         black_content = self._extract_black_elements_from_colored_container(child, "nested_table_cell")
@@ -878,6 +933,10 @@ class ContentExtractor:
                     nested_html = self._process_nested_table_to_html(child)
                     if nested_html:
                         result_parts.append(nested_html)
+                elif child.name in ["a", "ac:link"]:
+                    link_content = self._process_link(child, "nested_table_cell")
+                    if link_content:
+                        result_parts.append(link_content)
                 elif child.name == "br":
                     result_parts.append("\n")
                 elif child.name == "p":
