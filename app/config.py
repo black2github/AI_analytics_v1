@@ -7,6 +7,7 @@ load_dotenv()
 
 APP_VERSION = os.getenv("APP_VERSION", "0.28.0")
 
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
