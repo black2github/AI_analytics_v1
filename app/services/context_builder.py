@@ -7,7 +7,8 @@ from app.confluence_loader import get_page_content_by_id
 from app.embedding_store import get_vectorstore
 from app.llm_interface import get_embeddings_model
 from app.rag_pipeline import logger, _extract_links_from_unconfirmed_fragments, \
-    _get_approved_content_cached, count_tokens
+    _get_approved_content_cached
+from app.utils.tokens_budget_utils import count_tokens
 from app.semantic_search import extract_entity_names_from_requirements, unified_search_by_entity_title, \
     extract_entity_attribute_queries, extract_key_queries
 from app.service_registry import get_platform_services
@@ -318,7 +319,7 @@ def _truncate_document(doc: Document, max_tokens: int) -> Document:
     Returns:
         Обрезанный документ
     """
-    from app.rag_pipeline import count_tokens
+    from app.utils.tokens_budget_utils import count_tokens
 
     content = doc.page_content
     current_tokens = count_tokens(content)
