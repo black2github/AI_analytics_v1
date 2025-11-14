@@ -6,7 +6,7 @@ import tiktoken
 from bs4 import BeautifulSoup
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
-from app.config import LLM_PROVIDER, TEMPLATE_ANALYSIS_PROMPT_FILE, PAGE_ANALYSIS_PROMPT_FILE
+from app.config import TEMPLATE_ANALYSIS_PROMPT_FILE, PAGE_ANALYSIS_PROMPT_FILE
 from app.confluence_loader import get_page_content_by_id, extract_approved_fragments
 from app.llm_interface import get_llm
 from app.utils.style_utils import has_colored_style
@@ -112,20 +112,6 @@ def _get_approved_content_cached(page_id: str) -> Optional[str]:
 
 
 _encoding = tiktoken.get_encoding("cl100k_base")
-
-
-def count_tokens(text: str) -> int:
-    """Подсчитывает количество токенов в тексте"""
-    if LLM_PROVIDER == "deepseek":
-        import tiktoken
-        encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
-    else:
-        try:
-            return len(_encoding.encode(text))
-        except Exception as e:
-            logger.error("[count_tokens] Error counting tokens: %s", str(e))
-            return len(text.split())
 
 
 def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMChain:
