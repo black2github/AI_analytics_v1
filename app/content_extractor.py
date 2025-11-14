@@ -916,12 +916,10 @@ class ContentExtractor:
                 if self._is_ignored_element(child):
                     continue
 
+                # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Применяем цветовую фильтрацию
                 should_include = self._should_include_element(child)
-
-                # Применяем цветовую фильтрацию
                 if not should_include:
                     if not self.config.include_colored:
-                        # Элемент цветной - пытаемся извлечь черные части
                         black_content = self._extract_black_elements_from_colored_container(child, "nested_table_cell")
                         if black_content:
                             result_parts.append(black_content)
@@ -937,6 +935,11 @@ class ContentExtractor:
                     link_content = self._process_link(child, "nested_table_cell")
                     if link_content:
                         result_parts.append(link_content)
+                elif child.name in ["ul", "ol"]:
+                    # Списки обрабатываем через _process_list
+                    list_content = self._process_list(child, "nested_table_cell")
+                    if list_content:
+                        result_parts.append(list_content)
                 elif child.name == "br":
                     result_parts.append("\n")
                 elif child.name == "p":
@@ -967,7 +970,7 @@ class ContentExtractor:
 
     def _process_children_without_color_filter(self, element: Tag, context: str) -> str:
         """
-        НОВЫЙ МЕТОД: Обработка дочерних элементов БЕЗ цветовой фильтрации.
+        Обработка дочерних элементов БЕЗ цветовой фильтрации.
         Используется когда мы уже внутри подтвержденного (черного) элемента.
         """
         result_parts = []
