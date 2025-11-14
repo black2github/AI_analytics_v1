@@ -4,7 +4,7 @@ import logging
 from app.config import UNIFIED_STORAGE_NAME
 from app.embedding_store import get_vectorstore
 from app.llm_interface import get_embeddings_model
-from app.rag_pipeline import count_tokens  # Используем вашу функцию подсчета токенов
+from app.utils.tokens_budget_utils import count_tokens
 
 logger = logging.getLogger(__name__)
 
