@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Any
 from langchain_core.prompts import PromptTemplate
 from langchain.chains.llm import LLMChain
 from app.llm_interface import get_llm
-from app.rag_pipeline import count_tokens
+from app.utils.tokens_budget_utils import count_tokens
 from app.confluence_loader import get_child_page_ids
 from app.filter_all_fragments import filter_all_fragments
 from app.filter_approved_fragments import filter_approved_fragments
