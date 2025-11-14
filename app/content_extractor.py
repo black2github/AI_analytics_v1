@@ -902,7 +902,7 @@ class ContentExtractor:
         """
         ИСПРАВЛЕНО: Обработка содержимого ячейки вложенной таблицы.
         Конвертирует вложенные таблицы в HTML, а не в Markdown.
-        ДОБАВЛЕНА цветовая фильтрация для режима "только подтвержденные"
+        ДОБАВЛЕНА обработка заголовков h1-h6
         """
         result_parts = []
 
@@ -931,6 +931,20 @@ class ContentExtractor:
                     nested_html = self._process_nested_table_to_html(child)
                     if nested_html:
                         result_parts.append(nested_html)
+                elif child.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                    # ДОБАВЛЕНО: Обработка заголовков
+                    if self.config.format_headers:
+                        level = int(child.name[1])
+                        prefix = "#" * level
+                        content = self._process_nested_table_cell_content(child)
+                        if content:
+                            result_parts.append(f"{prefix} {content}\n")
+                    else:
+                        content = self._process_nested_table_cell_content(child)
+                        if content:
+                            result_parts.append(content)
+                            if not content.endswith('\n'):
+                                result_parts.append('\n')
                 elif child.name in ["a", "ac:link"]:
                     link_content = self._process_link(child, "nested_table_cell")
                     if link_content:
