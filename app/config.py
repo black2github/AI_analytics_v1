@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_VERSION = os.getenv("APP_VERSION", "0.27.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.28.0")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
