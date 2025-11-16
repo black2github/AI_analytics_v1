@@ -54,26 +54,29 @@ class ContentExtractor:
         """
         ИСПРАВЛЕНО: Обработка таблиц с правильным порядком заголовков
         Таблицы внутри ячеек других таблиц конвертируются в HTML
+        ИСПРАВЛЕНИЕ: Корректная обработка всех строк из thead независимо от типа ячеек
         """
         if not self.config.format_tables:
             return self._process_text_container(element, context)
 
-        # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Если таблица находится внутри ячейки другой таблицы,
+        # Если таблица находится внутри ячейки другой таблицы,
         # конвертируем её в HTML вместо Markdown
         if context in ["table_cell", "nested_table_cell"]:
             return self._process_nested_table_to_html(element)
 
         # Для обычного контекста - создаём Markdown таблицу
-        # ИСПРАВЛЕНИЕ: Собираем строки в правильном порядке
+        # Собираем строки в правильном порядке
         table_rows = []
 
-        # 1. СНАЧАЛА обрабатываем заголовки из thead
+        # 1. Обрабатываем ВСЕ строки из thead как заголовки
+        # независимо от того, используют они <th> или <td>
         thead = element.find("thead")
         if thead:
             header_rows = thead.find_all("tr", recursive=False)
             for row in header_rows:
                 cells = row.find_all(["td", "th"], recursive=False)
                 if cells:
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Все строки из thead обрабатываем как заголовки
                     row_data = self._process_table_row_cells(cells, context, is_header=True)
                     if row_data:
                         table_rows.append(("header", row_data))
@@ -105,16 +108,18 @@ class ContentExtractor:
         if not table_rows:
             return ""
 
-        # Формируем таблицу в правильном порядке
+        # Формируем таблицу с правильной обработкой множественных заголовков
         table_lines = []
-        has_headers = False
+        has_separator = False  # Флаг для добавления разделителя только один раз
 
         for row_type, row_data in table_rows:
-            if row_type == "header" and not has_headers:
-                # Добавляем заголовки
+            if row_type == "header":
+                # Добавляем строку заголовка
                 table_lines.append("| " + " | ".join(row_data) + " |")
-                table_lines.append("|" + "|".join([" --- " for _ in row_data]) + "|")
-                has_headers = True
+                # Добавляем разделитель только после ПЕРВОГО заголовка
+                if not has_separator:
+                    table_lines.append("|" + "|".join([" --- " for _ in row_data]) + "|")
+                    has_separator = True
             elif row_type == "body":
                 # Добавляем строки тела таблицы
                 table_lines.append("| " + " | ".join(row_data) + " |")

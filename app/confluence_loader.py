@@ -87,30 +87,49 @@ def load_pages_by_ids(page_ids: List[str]) -> List[Dict[str, str]]:
     """
     logger.info("[load_pages_by_ids] <- page_ids={%s}", page_ids)
 
-    # ДОБАВЛЯЕМ ИМПОРТ кешированной функции
     from app.page_cache import get_page_data_cached
 
     pages = []
     for page_id in page_ids:
-        # ЗАМЕНЯЕМ множественные запросы на один кешированный
+        logger.debug("[load_pages_by_ids] Processing page_id=%s", page_id)
+
         page_data = get_page_data_cached(page_id)
 
         if not page_data:
-            logging.warning("Пропущена страница {%s} из-за ошибок загрузки.", page_id)
+            logger.warning("[load_pages_by_ids] Пропущена страница {%s} из-за ошибок загрузки.", page_id)
             continue
 
+        # ИСПРАВЛЕНИЕ: Добавляем детальную проверку каждого поля
+        title = page_data.get('title')
+        full_markdown = page_data.get('full_markdown')
+        approved_content = page_data.get('approved_content')
+        requirement_type = page_data.get('requirement_type')
+
+        logger.debug("[load_pages_by_ids] page_id=%s -> title='%s', has_markdown=%s, has_approved=%s, type='%s'",
+                     page_id, title, bool(full_markdown), bool(approved_content), requirement_type)
+
         # Проверяем наличие обязательных данных
-        if not (page_data['title'] and page_data['full_markdown'] and page_data['approved_content']):
-            logging.warning("Пропущена страница {%s} из-за отсутствия данных.", page_id)
+        if not title:
+            logger.warning("[load_pages_by_ids] Пропущена страница {%s}: отсутствует title.", page_id)
+            continue
+
+        if not full_markdown:
+            logger.warning("[load_pages_by_ids] Пропущена страница {%s}: отсутствует full_markdown.", page_id)
+            continue
+
+        if not approved_content:
+            logger.warning("[load_pages_by_ids] Пропущена страница {%s}: отсутствует approved_content.", page_id)
             continue
 
         pages.append({
-            "id": page_data['id'],
-            "title": page_data['title'],
-            "content": page_data['full_markdown'],
-            "approved_content": page_data['approved_content'],
-            "requirement_type": page_data['requirement_type']
+            "id": page_id,
+            "title": title,
+            "content": full_markdown,
+            "approved_content": approved_content,
+            "requirement_type": requirement_type
         })
+
+        logger.debug("[load_pages_by_ids] Успешно добавлена страница: id=%s, title='%s'", page_id, title)
 
     logger.info("[load_pages_by_ids] -> Успешно загружено страниц: %s из %s", len(pages), len(page_ids))
     return pages
