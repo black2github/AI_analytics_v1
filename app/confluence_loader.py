@@ -45,6 +45,7 @@ def get_page_content_by_id(page_id: str, clean_html: bool = True) -> Optional[st
 
     page_data = get_page_data_cached(page_id)
     if not page_data:
+        logger.warning("[get_page_content_by_id] -> None.")
         return None
 
     if clean_html:
