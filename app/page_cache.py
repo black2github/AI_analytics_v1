@@ -8,7 +8,7 @@ from app.config import PAGE_CACHE_SIZE, PAGE_CACHE_TTL
 from app.confluence_loader import confluence, extract_approved_fragments
 from app.filter_all_fragments import filter_all_fragments
 from app.services.template_type_analysis import analyze_content_template_type
-from cachetools import TTLCache, cached
+from cachetools import TTLCache
 from cachetools.keys import hashkey
 import threading
 
@@ -18,10 +18,13 @@ logger = logging.getLogger(__name__)
 page_cache = TTLCache(maxsize=PAGE_CACHE_SIZE, ttl=PAGE_CACHE_TTL)
 cache_lock = threading.RLock()
 
-@cached(cache=page_cache, lock=cache_lock, key=lambda page_id: hashkey(page_id))
+
 def get_page_data_cached(page_id: str) -> Optional[Dict]:
     """
     Кешированная функция для получения всех данных страницы за один запрос.
+
+    Не кешируем None (неудачные результаты), чтобы избежать
+    повторяющихся ошибок "нет данных" из-за закешированных неудач.
 
     Args:
         page_id: Идентификатор страницы
@@ -31,20 +34,33 @@ def get_page_data_cached(page_id: str) -> Optional[Dict]:
     """
     logger.debug("[get_page_data_cached] <- page_id=%s", page_id)
 
+    # Создаем ключ для кеша
+    cache_key = hashkey(page_id)
+
+    # Проверяем наличие в кеше
+    with cache_lock:
+        if cache_key in page_cache:
+            cached_data = page_cache[cache_key]
+            logger.debug("[get_page_data_cached] Cache HIT for page_id=%s", page_id)
+            return cached_data
+
+    logger.debug("[get_page_data_cached] Cache MISS for page_id=%s", page_id)
+
+    # Загружаем данные
     try:
         # Единственный запрос к Confluence API
         page = confluence.get_page_by_id(page_id, expand='body.storage,title')
 
         if not page:
             logger.warning("[get_page_data_cached] Page not found: %s", page_id)
-            return None
+            return None  # НЕ кешируем None
 
         title = page.get('title', '')
         raw_html = page.get('body', {}).get('storage', {}).get('value', '')
 
         if not raw_html:
             logger.warning("[get_page_data_cached] No content found for page_id=%s", page_id)
-            return None
+            return None  # НЕ кешируем None
 
         # Все виды обработки HTML выполняем один раз
         full_content = filter_all_fragments(raw_html)
@@ -62,29 +78,35 @@ def get_page_data_cached(page_id: str) -> Optional[Dict]:
             'requirement_type': requirement_type
         }
 
-        logger.debug("[get_page_data_cached] -> Processed page: title='%s', type='%s'",
+        # ТОЛЬКО успешные результаты кешируем
+        with cache_lock:
+            page_cache[cache_key] = result
+
+        logger.debug("[get_page_data_cached] -> Processed and CACHED page: title='%s', type='%s'",
                      title, requirement_type)
         return result
 
     except Exception as e:
         logger.error("[get_page_data_cached] Error processing page_id=%s: %s", page_id, str(e))
-        return None
+        return None  # НЕ кешируем ошибки
 
 
 def clear_page_cache():
     """Очистка кеша страниц"""
-    get_page_data_cached.cache_clear()
+    with cache_lock:
+        page_cache.clear()
     logger.info("[clear_page_cache] Page cache cleared")
 
 
 def get_cache_info():
     """Информация о состоянии кеша"""
-    cache_info = get_page_data_cached.cache_info()
-    logger.info("[get_cache_info] Cache stats: hits=%d, misses=%d, size=%d",
-                cache_info.hits, cache_info.misses, cache_info.currsize)
+    with cache_lock:
+        current_size = len(page_cache)
+
+    logger.info("[get_cache_info] Cache stats: size=%d, max_size=%d",
+                current_size, PAGE_CACHE_SIZE)
     return {
-        'hits': cache_info.hits,
-        'misses': cache_info.misses,
-        'current_size': cache_info.currsize,
-        'max_size': cache_info.maxsize
+        'current_size': current_size,
+        'max_size': PAGE_CACHE_SIZE,
+        'ttl': PAGE_CACHE_TTL
     }
