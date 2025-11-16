@@ -1,4 +1,4 @@
-# app/routes/content_extractor.py
+# app/routes/extractor.py
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
