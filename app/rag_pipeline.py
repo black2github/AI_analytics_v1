@@ -43,14 +43,27 @@ def build_chain(prompt_template: Optional[str]) -> LLMChain:
     return LLMChain(llm=llm, prompt=prompt)
 
 
-def _extract_links_from_unconfirmed_fragments(html_content: str, exclude_page_ids: List[str]) -> List[str]:
-    """Извлекает уникальные ссылки ТОЛЬКО из неподтвержденных (цветных) фрагментов требований."""
+def _extract_links_from_unconfirmed_fragments(html_content: str, exclude_page_ids: List[str],
+                                              include_all: bool = False) -> List[str]:
+    """
+    Извлекает уникальные ссылки из фрагментов требований.
+
+    Args:
+        html_content: HTML контент страницы
+        exclude_page_ids: Список page_id для исключения
+        include_all: Если True, извлекает ссылки из всех фрагментов (черных и цветных),
+                     если False - только из неподтвержденных (цветных)
+
+    Returns:
+        Список уникальных page_id найденных ссылок
+    """
     soup = BeautifulSoup(html_content, 'html.parser')
     found_page_ids = set()
     exclude_set = set(exclude_page_ids)
 
     for element in soup.find_all(["p", "li", "span", "div", "td", "th"]):
-        if not has_colored_style(element):
+        # Если include_all=False, пропускаем элементы без цветного стиля (черные)
+        if not include_all and not has_colored_style(element):
             continue
 
         element_links = _extract_confluence_links_from_element(element)

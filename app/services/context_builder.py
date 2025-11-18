@@ -420,6 +420,8 @@ def _deduplicate_with_existing(new_docs: List[Document], existing_docs: List[Doc
 def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Document]:
     """
     Извлечение контекста по ссылкам ТОЛЬКО из неподтвержденных (цветных) фрагментов.
+    ДОПОЛНЕНО: Если страница не содержит подтвержденных требований в векторном хранилище,
+    извлекаем ссылки из всего текста страницы.
     Возвращает список Document.
     """
     logger.info("[_extract_linked_context_optimized] <- Processing %d pages for links", len(exclude_page_ids))
@@ -433,15 +435,39 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Docum
 
     max_links_per_page = max_linked_pages // min(max_pages, len(exclude_page_ids)) + 1
 
+    # Получаем vectorstore для проверки наличия фрагментов
+    embeddings_model = get_embeddings_model()
+    store = get_vectorstore(UNIFIED_STORAGE_NAME, embedding_model=embeddings_model)
+
     for page_id in exclude_page_ids[:max_pages]:
         try:
             content = get_page_content_by_id(page_id, clean_html=False)
             if not content:
                 continue
 
-            linked_page_ids = _extract_links_from_unconfirmed_fragments(content, exclude_page_ids)
-            logger.debug("[_extract_linked_context_optimized] Found %d links in unconfirmed fragments for page '%s'",
-                         len(linked_page_ids), page_id)
+            # Проверяем, есть ли подтвержденные требования в векторном хранилище
+            has_approved_requirements = _check_page_has_approved_requirements(store, page_id)
+
+            if has_approved_requirements:
+                # Страница содержит подтвержденные требования - извлекаем ссылки только из цветных фрагментов
+                linked_page_ids = _extract_links_from_unconfirmed_fragments(
+                    content, exclude_page_ids, include_all=False
+                )
+                logger.debug(
+                    "[_extract_linked_context_optimized] Page '%s' has approved requirements. "
+                    "Found %d links in unconfirmed (colored) fragments",
+                    page_id, len(linked_page_ids)
+                )
+            else:
+                # Страница НЕ содержит подтвержденных требований - извлекаем ссылки из всего текста
+                linked_page_ids = _extract_links_from_unconfirmed_fragments(
+                    content, exclude_page_ids, include_all=True
+                )
+                logger.debug(
+                    "[_extract_linked_context_optimized] Page '%s' has NO approved requirements. "
+                    "Found %d links in ALL fragments",
+                    page_id, len(linked_page_ids)
+                )
 
             for linked_page_id in linked_page_ids[:max_links_per_page]:
                 if len(linked_docs) >= max_linked_pages:
@@ -474,6 +500,40 @@ def _extract_linked_context_optimized(exclude_page_ids: List[str]) -> List[Docum
     logger.info("[_extract_linked_context_optimized] -> Found %d linked documents", len(linked_docs))
     return linked_docs
 
+
+def _check_page_has_approved_requirements(store, page_id: str) -> bool:
+    """
+    Проверяет, есть ли в векторном хранилище хотя бы один фрагмент от данной страницы.
+
+    Args:
+        store: Векторное хранилище
+        page_id: ID проверяемой страницы
+
+    Returns:
+        True, если есть хотя бы один фрагмент, False в противном случае
+    """
+    try:
+        # Выполняем фиктивный поиск с фильтром по page_id
+        results = store.similarity_search(
+            query="test",  # Любой запрос, нас интересует только фильтр
+            k=1,
+            filter={"page_id": {"$eq": page_id}}
+        )
+
+        has_requirements = len(results) > 0
+        logger.debug(
+            "[_check_page_has_approved_requirements] Page '%s' has approved requirements: %s",
+            page_id, has_requirements
+        )
+        return has_requirements
+
+    except Exception as e:
+        logger.error(
+            "[_check_page_has_approved_requirements] Error checking page_id=%s: %s. Assuming no approved requirements.",
+            page_id, str(e)
+        )
+        # В случае ошибки считаем, что подтвержденных требований нет (безопасный вариант)
+        return False
 
 def unified_service_search(queries: List[str], service_code: str, exclude_page_ids: Optional[List[str]],
                            k_per_query: int, embeddings_model) -> List[Document]:
