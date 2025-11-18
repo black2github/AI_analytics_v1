@@ -1,4 +1,4 @@
-# app/routes/jira.py - ИСПРАВЛЕННАЯ ВЕРСИЯ с условным созданием объектов
+# app/routes/jira.py - ИСПРАВЛЕННАЯ ВЕРСИЯ с параллельностью
 
 """
 Маршруты для работы с Jira API.
@@ -7,6 +7,8 @@ import logging
 from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
+import anyio  # pip install anyio
+
 from app.jira_loader import extract_confluence_page_ids_from_jira_tasks
 from app.services.analysis_service import analyze_pages
 
@@ -56,9 +58,13 @@ class JiraTaskResponse(BaseModel):
 @router.post("/analyze-jira-task", response_model=JiraTaskResponse, response_model_exclude_none=True)
 async def analyze_jira_task(request: JiraTaskRequest):
     """
-    Анализирует задачи Jira с опциональной проверкой соответствия шаблонам
+     ОПТИМИЗИРОВАНО: Анализирует задачи Jira с параллельной обработкой
+
+    Анализирует задачи Jira с опциональной проверкой соответствия шаблонам.
+    Тяжелые операции (извлечение page_ids и анализ) выполняются в отдельных потоках.
     """
-    logger.info("[analyze_jira_task] <- Request received with check_templates=%s", request.check_templates)
+    logger.info("[analyze_jira_task] <- Processing %d Jira task(s) with check_templates=%s",
+                len(request.jira_task_ids), request.check_templates)
 
     try:
         jira_task_ids = request.jira_task_ids
@@ -72,10 +78,12 @@ async def analyze_jira_task(request: JiraTaskRequest):
                 error="jira_task_ids cannot be empty"
             )
 
-        logger.info("[analyze_jira_task] Processing %d Jira task IDs", len(jira_task_ids))
-
-        # Шаг 1: Извлекаем page_ids из задач Jira
-        page_ids = extract_confluence_page_ids_from_jira_tasks(jira_task_ids)
+        #  ШАГ 1: Извлекаем page_ids из задач Jira (блокирующая операция в thread pool)
+        logger.info("[analyze_jira_task] Extracting Confluence page IDs from Jira tasks...")
+        page_ids = await anyio.to_thread.run_sync(
+            extract_confluence_page_ids_from_jira_tasks,
+            jira_task_ids
+        )
 
         logger.info("[analyze_jira_task] Found %d Confluence page IDs", len(page_ids))
 
@@ -89,20 +97,21 @@ async def analyze_jira_task(request: JiraTaskRequest):
                 error="No Confluence page IDs found in the specified Jira tasks"
             )
 
-        # Шаг 2: Проводим анализ найденных страниц
+        #  ШАГ 2: Проводим анализ найденных страниц (блокирующая операция в thread pool)
         logger.info("[analyze_jira_task] Starting analysis of %d pages with check_templates=%s",
                     len(page_ids), request.check_templates)
 
-        analysis_results = analyze_pages(
-            page_ids=page_ids,
-            prompt_template=request.prompt_template,
-            service_code=request.service_code,
-            check_templates=request.check_templates
+        analysis_results = await anyio.to_thread.run_sync(
+            analyze_pages,
+            page_ids,
+            request.prompt_template,
+            request.service_code,
+            request.check_templates
         )
 
-        logger.info("[analyze_jira_task] -> Analysis completed successfully, got %d results", len(analysis_results))
+        logger.info("[analyze_jira_task] -> Analysis completed, got %d results", len(analysis_results))
 
-        # ИСПРАВЛЕНО: Создаем объекты с условными параметрами
+        # Обработка результатов (быстрая операция, не требует thread pool)
         parsed_results = []
         templates_analyzed = 0
 
@@ -114,13 +123,13 @@ async def analyze_jira_task(request: JiraTaskRequest):
                 if template_analysis and template_analysis.get("template_type"):
                     templates_analyzed += 1
 
-                # ИСПРАВЛЕНИЕ: Используем ** для условной передачи параметров
+                # Создаем объект с условными параметрами
                 result_params = {
                     "page_id": result["page_id"],
                     "analysis": result["analysis"]
                 }
 
-                # Добавляем template_analysis только если он существует и не пустой
+                # Добавляем template_analysis только если он существует
                 if template_analysis:
                     result_params["template_analysis"] = template_analysis
 
@@ -128,8 +137,9 @@ async def analyze_jira_task(request: JiraTaskRequest):
                 parsed_results.append(parsed_result)
 
                 logger.debug(
-                    "[analyze_jira_task] Successfully processed result for page_id=%s, has_template_analysis=%s",
+                    "[analyze_jira_task] Processed result for page_id=%s, has_template=%s",
                     result["page_id"], template_analysis is not None)
+
             except Exception as e:
                 logger.error("[analyze_jira_task] Error processing result for page_id=%s: %s",
                              result.get("page_id", "unknown"), str(e))
@@ -139,10 +149,10 @@ async def analyze_jira_task(request: JiraTaskRequest):
                     analysis={"error": f"Processing error: {str(e)}"}
                 ))
 
-        logger.debug("[analyze_jira_task] Successfully parsed %d analysis results, %d templates analyzed",
-                     len(parsed_results), templates_analyzed)
+        logger.info("[analyze_jira_task] Successfully parsed %d results, %d templates analyzed",
+                    len(parsed_results), templates_analyzed)
 
-        response = JiraTaskResponse(
+        return JiraTaskResponse(
             success=True,
             jira_task_ids=jira_task_ids,
             confluence_page_ids=page_ids,
@@ -151,10 +161,8 @@ async def analyze_jira_task(request: JiraTaskRequest):
             templates_analyzed=templates_analyzed
         )
 
-        return response
-
     except Exception as e:
-        logger.error("[analyze_jira_task] Error: %s", str(e))
+        logger.error("[analyze_jira_task] Error: %s", str(e), exc_info=True)
         return JiraTaskResponse(
             success=False,
             jira_task_ids=request.jira_task_ids if request else [],
@@ -175,6 +183,7 @@ async def health_check():
             "GET /jira/health"
         ],
         "features": [
+            "Parallel processing with anyio",
             "Confluence page extraction",
             "Requirements analysis",
             "Template structure analysis"

@@ -1,9 +1,11 @@
-# app/routes/template_analysis.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# app/routes/template_analysis.py - ИСПРАВЛЕННАЯ ВЕРСИЯ с параллельностью
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
+import anyio  # pip install anyio
+
 from app.services.template_type_analysis import analyze_pages_template_types
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,10 @@ class AnalyzeTypesResponse(BaseModel):
 @router.post("/analyze_types", response_model=AnalyzeTypesResponse, tags=["Анализ типов шаблонов"])
 async def analyze_template_types(request: AnalyzeTypesRequest):
     """
-    Определяет типы шаблонов требований для списка страниц Confluence
+    ✅ ОПТИМИЗИРОВАНО: Определяет типы шаблонов с параллельной обработкой.
+
+    Определяет типы шаблонов требований для списка страниц Confluence.
+    Каждая страница анализируется в отдельном потоке для максимальной производительности.
 
     Args:
         page_ids: Список идентификаторов страниц
@@ -38,11 +43,14 @@ async def analyze_template_types(request: AnalyzeTypesRequest):
     Returns:
         Список пар page_id - template_name для каждой страницы
     """
-    logger.info("[analyze_template_types] <- Analyzing %d pages", len(request.page_ids))
+    logger.info("[analyze_template_types] <- Analyzing %d pages in parallel", len(request.page_ids))
 
     try:
-        # Анализируем типы шаблонов
-        template_types = analyze_pages_template_types(request.page_ids)
+        # ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Запускаем блокирующую операцию в thread pool
+        template_types = await anyio.to_thread.run_sync(
+            analyze_pages_template_types,
+            request.page_ids
+        )
 
         # Формируем результат в виде пар page_id - template_name
         results = []

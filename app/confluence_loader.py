@@ -1,8 +1,11 @@
 # app/confluence_loader.py
 
 import logging
+import time
 from typing import List, Dict, Optional
 from atlassian import Confluence
+from requests import ReadTimeout
+
 from app.config import CONFLUENCE_BASE_URL, CONFLUENCE_USER, CONFLUENCE_PASSWORD
 from app.filter_approved_fragments import filter_approved_fragments
 
@@ -143,46 +146,44 @@ def load_template_markdown(page_id: str) -> Optional[str]:
 
 
 def get_child_page_ids(page_id: str) -> List[str]:
-    """Возвращает список идентификаторов всех дочерних страниц для указанной страницы Confluence.
-
-    Args:
-        page_id: Идентификатор страницы Confluence.
-
-    Returns:
-        Список идентификаторов дочерних страниц (включая вложенные).
-
-    Raises:
-        Exception: Если доступ к странице невозможен или произошла ошибка API.
-    """
+    """Возвращает список идентификаторов всех дочерних страниц."""
     child_page_ids = []
-    visited_pages = set()  # ДОБАВЛЯЕМ защиту от циклов
+    visited_pages = set()
+    max_retries = 3
 
-    def fetch_children(current_page_id: str):
+    def fetch_children(current_page_id: str, retry_count: int = 0):
         """Рекурсивно собирает идентификаторы дочерних страниц."""
-        # ДОБАВЛЯЕМ защиту от бесконечной рекурсии
         if current_page_id in visited_pages:
             logger.warning("[fetch_children] Circular reference detected for page_id=%s", current_page_id)
             return
 
         visited_pages.add(current_page_id)
-
         logger.debug("[fetch_children] <- current_page_id={%s}", current_page_id)
+
         try:
-            # Получение дочерних страниц через Confluence API
             children = confluence.get_child_pages(current_page_id)
             for child in children:
                 child_id = child["id"]
                 child_page_ids.append(child_id)
                 logger.debug("[get_child_page_ids] Found child page: %s for parent: %s", child_id, current_page_id)
-                # Рекурсивный вызов для вложенных страниц
                 fetch_children(child_id)
+
+        except ReadTimeout as e:
+            if retry_count < max_retries:
+                logger.warning(f"Timeout for page {current_page_id}, retry {retry_count + 1}/{max_retries}")
+                time.sleep(2 ** retry_count)  # Exponential backoff
+                fetch_children(current_page_id, retry_count + 1)
+            else:
+                logger.error(f"Failed to fetch children for page {current_page_id} after {max_retries} retries: {e}")
+                # Продолжаем работу, но пропускаем эту страницу
+
         except Exception as e:
-            logging.error("Failed to fetch children for page %s: %s", current_page_id, str(e))
-            raise
+            logger.error(f"Failed to fetch children for page {current_page_id}: {str(e)}")
+            # Продолжаем работу вместо полного падения
 
     try:
         fetch_children(page_id)
         return child_page_ids
     except Exception as e:
         logging.exception("Error fetching child pages for page_id=%s", page_id)
-        raise
+        return child_page_ids  # Возвращаем то, что успели собрать
