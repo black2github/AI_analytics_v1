@@ -299,10 +299,15 @@ def build_context_optimized(
     context = _build_final_context(context_docs)
     final_tokens = count_tokens(context)
 
+    # Собираем page_id и titles всех документов для логирования
+    doc_page_ids = [doc.metadata.get('page_id', 'unknown') for doc in context_docs]
+    titles = [doc.metadata.get('title', 'Без названия') for doc in context_docs]
+
     logger.info(
-        "[build_context_optimized] -> Final: %d docs, %d tokens (%.1f%% of budget)",
+        "[build_context_optimized] -> Final: %d docs, %d tokens (%.1f%% of budget), page titles=%s",
         len(context_docs), final_tokens,
-        (final_tokens / MAX_TOKENS_TOTAL * 100) if MAX_TOKENS_TOTAL > 0 else 0
+        (final_tokens / MAX_TOKENS_TOTAL * 100) if MAX_TOKENS_TOTAL > 0 else 0,
+        titles
     )
 
     return context
