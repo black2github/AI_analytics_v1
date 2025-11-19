@@ -1,11 +1,13 @@
 # app/routes/extractor.py - С добавленным эндпоинтом /markdown
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import logging
 import asyncio
 import anyio
+from anyio import to_thread
+import base64
 from atlassian import Confluence
 
 from app.filter_all_fragments import filter_all_fragments
@@ -26,13 +28,6 @@ class ExtractContentRequest(BaseModel):
     page_ids: List[str]
 
 
-class MarkdownExtractRequest(BaseModel):
-    """Запрос на извлечение контента с кастомными учетными данными"""
-    username: str
-    password: str
-    page_ids: List[str]
-
-
 class PageContent(BaseModel):
     """Контент одной страницы"""
     page_id: str
@@ -47,6 +42,51 @@ class ExtractContentResponse(BaseModel):
     total_pages: int
     processed_pages: int
     pages: List[PageContent]
+
+
+# ============================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С АУТЕНТИФИКАЦИЕЙ
+# ============================================================================
+
+def parse_basic_auth(authorization: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Парсит HTTP Basic Authentication заголовок.
+
+    Args:
+        authorization: Значение заголовка Authorization (например: "Basic dXNlcjpwYXNz")
+
+    Returns:
+        Tuple (username, password) или (None, None) если заголовок невалиден
+    """
+    if not authorization:
+        return None, None
+
+    try:
+        # Проверяем, что это Basic Auth
+        if not authorization.startswith('Basic '):
+            logger.warning("[parse_basic_auth] Authorization header doesn't start with 'Basic '")
+            return None, None
+
+        # Извлекаем base64 часть
+        encoded_credentials = authorization[6:]  # Убираем "Basic "
+
+        # Декодируем base64
+        decoded_bytes = base64.b64decode(encoded_credentials)
+        decoded_str = decoded_bytes.decode('utf-8')
+
+        # Разделяем на username и password
+        if ':' not in decoded_str:
+            logger.warning("[parse_basic_auth] Invalid credentials format (no colon)")
+            return None, None
+
+        username, password = decoded_str.split(':', 1)
+
+        logger.debug("[parse_basic_auth] Successfully parsed credentials for user=%s", username)
+        return username, password
+
+    except Exception as e:
+        logger.error("[parse_basic_auth] Error parsing authorization header: %s", str(e))
+        return None, None
 
 
 # ============================================================================
@@ -394,13 +434,16 @@ async def extract_approved_content(request: ExtractContentRequest):
 @router.post("/markdown",
              response_model=ExtractContentResponse,
              tags=["Извлечение контента"],
-             summary="Получение контента с кастомными учетными данными")
-async def extract_markdown_with_credentials(request: MarkdownExtractRequest):
+             summary="Получение контента с кастомными учетными данными из заголовка")
+async def extract_markdown_with_credentials(
+        request: ExtractContentRequest,
+        authorization: Optional[str] = Header(None)
+):
     """
-    НОВЫЙ ЭНДПОИНТ: Извлекает контент страниц с использованием переданных учетных данных.
+    НОВЫЙ ЭНДПОИНТ: Извлекает контент страниц с использованием учетных данных из HTTP заголовка.
 
     В отличие от /extract_all_content:
-    - Принимает username и password в теле запроса
+    - Использует HTTP Basic Authentication из заголовка Authorization
     - НЕ использует кеширование (каждый запрос идет напрямую в Confluence)
     - Создает отдельное соединение для каждого запроса
     - Работает параллельно для всех страниц
@@ -411,19 +454,37 @@ async def extract_markdown_with_credentials(request: MarkdownExtractRequest):
     - Доступа к страницам с ограниченными правами
     - Тестирования прав доступа
 
+    Headers:
+        Authorization: Basic <base64(username:password)>
+
+    Пример:
+        Authorization: Basic YXNlbjpteXBhc3N3b3Jk
+        (где "YXNlbjpteXBhc3N3b3Jk" это base64 от "asen:mypassword")
+
     Args:
-        username: Имя пользователя Confluence
-        password: Пароль пользователя Confluence
         page_ids: Список идентификаторов страниц Confluence
+        authorization: HTTP заголовок Authorization с Basic Auth
 
     Returns:
         Список страниц с полным извлеченным текстом требований
 
     Raises:
-        HTTPException: Если учетные данные некорректны или доступ запрещен
+        HTTPException 401: Если заголовок Authorization отсутствует или невалиден
+        HTTPException 401: Если учетные данные некорректны или доступ запрещен
     """
+    # Парсим credentials из заголовка
+    username, password = parse_basic_auth(authorization)
+
+    if not username or not password:
+        logger.warning("[extract_markdown_with_credentials] Missing or invalid Authorization header")
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization header with Basic authentication is required. Format: 'Basic <base64(username:password)>'",
+            headers={"WWW-Authenticate": "Basic"}
+        )
+
     logger.info("[extract_markdown_with_credentials] <- Processing %d page(s) for user=%s",
-                len(request.page_ids), request.username)
+                len(request.page_ids), username)
 
     if not request.page_ids:
         return ExtractContentResponse(
@@ -433,22 +494,13 @@ async def extract_markdown_with_credentials(request: MarkdownExtractRequest):
             pages=[],
         )
 
-    if not request.username or not request.password:
-        raise HTTPException(
-            status_code=400,
-            detail="Username and password are required"
-        )
-
-    # УБРАЛИ предварительную валидацию - она будет происходить при попытке получить первую страницу
-    # Это тот же подход, что используется в остальной системе
-
     # Параллельная обработка всех страниц с кастомными credentials
     async def process_page_async(page_id: str) -> PageContent:
         """Обертка для запуска синхронной функции в thread pool"""
         return await anyio.to_thread.run_sync(
             _process_page_with_custom_credentials,
-            request.username,
-            request.password,
+            username,
+            password,
             page_id
         )
 
@@ -481,11 +533,12 @@ async def extract_markdown_with_credentials(request: MarkdownExtractRequest):
     ):
         raise HTTPException(
             status_code=401,
-            detail="Invalid credentials or access denied to all pages"
+            detail="Invalid credentials or access denied to all pages",
+            headers={"WWW-Authenticate": "Basic"}
         )
 
     logger.info("[extract_markdown_with_credentials] -> Processed %d/%d pages successfully for user=%s",
-                processed_count, len(request.page_ids), request.username)
+                processed_count, len(request.page_ids), username)
 
     return ExtractContentResponse(
         success=processed_count > 0,
