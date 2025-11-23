@@ -15,7 +15,8 @@ if CONFLUENCE_BASE_URL is None:
 confluence = Confluence(
     url=CONFLUENCE_BASE_URL,
     username=CONFLUENCE_USER,
-    password=CONFLUENCE_PASSWORD
+    password=CONFLUENCE_PASSWORD,
+    verify_ssl=False
 )
 
 logger = logging.getLogger(__name__)

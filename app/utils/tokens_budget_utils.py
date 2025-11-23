@@ -15,7 +15,9 @@ LLM_CONTEXT_SIZES = {
     'claude-sonnet-4': 200000,
     'claude-3-sonnet': 200000,
     'deepseek-chat': 128000,
-    'kimi-k2-thinking': 128000,
+    'kimi-k2-thinking': 256000,
+    'kimi-latest': 256000,
+    'kimi-k2-thinking-turbo': 256000,
     'default': LLM_CONTEXT_SIZE
 }
 
