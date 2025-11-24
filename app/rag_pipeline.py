@@ -11,13 +11,18 @@ from app.confluence_loader import get_page_content_by_id, extract_approved_fragm
 from app.llm_interface import get_llm
 from app.utils.style_utils import has_colored_style
 
-llm = get_llm()
+# ИСПРАВЛЕНО: Убрали глобальную инициализацию LLM
+# llm = get_llm()  # <-- УДАЛЕНО!
 logger = logging.getLogger(__name__)
 
 
 def build_chain(prompt_template: Optional[str]) -> LLMChain:
     """Создает цепочку LangChain с заданным шаблоном промпта."""
     logger.info("[build_chain] <- prompt_template=%s", bool(prompt_template))
+
+    # ИСПРАВЛЕНО: Получаем LLM при каждом вызове
+    llm = get_llm()
+
     if prompt_template:
         if not all(var in prompt_template for var in ["{requirement}", "{context}"]):
             raise ValueError("Prompt template must include {requirement} and {context}")
@@ -130,6 +135,9 @@ _encoding = tiktoken.get_encoding("cl100k_base")
 def build_template_analysis_chain(custom_prompt: Optional[str] = None) -> LLMChain:
     """Создает цепочку LangChain для анализа соответствия шаблону."""
     logger.info("[build_template_analysis_chain] <- custom_prompt provided: %s", bool(custom_prompt))
+
+    # ИСПРАВЛЕНО: Получаем LLM при каждом вызове
+    llm = get_llm()
 
     if custom_prompt:
         required_vars = ["{requirement}", "{template}", "{context}"]
