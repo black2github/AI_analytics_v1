@@ -3,6 +3,7 @@
 from typing import Dict
 from app.config import LLM_CONTEXT_SIZE, LLM_MODEL, LLM_PROVIDER
 from app.rag_pipeline import logger, _encoding
+import os
 
 # Определение размера контекста в токенах для разных моделей
 LLM_CONTEXT_SIZES = {
@@ -24,7 +25,8 @@ LLM_CONTEXT_SIZES = {
 
 def get_llm_context_size() -> int:
     """Определяет размер контекста текущей LLM"""
-    return LLM_CONTEXT_SIZES.get(LLM_MODEL, LLM_CONTEXT_SIZES['default'])
+    llm_model = os.getenv("LLM_MODEL", LLM_MODEL)  # fallback на импортированное
+    return LLM_CONTEXT_SIZES.get(llm_model, LLM_CONTEXT_SIZES['default'])
 
 
 def calculate_token_budget(
