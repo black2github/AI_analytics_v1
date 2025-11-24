@@ -6,7 +6,7 @@ from app.config import (
     LLM_MODEL,
     LLM_TEMPERATURE,
     OPENAI_API_KEY,
-    CLAUDE_API_KEY,
+    ANTHROPIC_API_KEY,
     EMBEDDING_PROVIDER,
     EMBEDDING_MODEL,
     DEEPSEEK_API_KEY,
@@ -17,50 +17,55 @@ logger = logging.getLogger(__name__)
 
 def get_llm():
     logger.debug("[get_llm] <-.")
-    if LLM_PROVIDER == "openai":
+    import os
+    current_provider = os.getenv("LLM_PROVIDER", LLM_PROVIDER)  # fallback на импортированное
+    llm_model = os.getenv("LLM_MODEL", LLM_MODEL)  # fallback на импортированное
+    llm_temperature = os.getenv("LLM_TEMPERATURE", LLM_TEMPERATURE)  # fallback на импортированное
+
+    if current_provider == "openai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
-            model=LLM_MODEL,
-            temperature=float(LLM_TEMPERATURE),
+            model=llm_model,
+            temperature=float(llm_temperature),
             api_key=OPENAI_API_KEY
         )
 
-    elif LLM_PROVIDER == "anthropic":
+    elif current_provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(
-            model=LLM_MODEL,
-            temperature=float(LLM_TEMPERATURE),
-            api_key=CLAUDE_API_KEY  # ANTHROPIC_API_KEY
+            model=llm_model,
+            temperature=float(llm_temperature),
+            api_key=ANTHROPIC_API_KEY
         )
 
-    elif LLM_PROVIDER == "deepseek":
+    elif current_provider == "deepseek":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
-            model=LLM_MODEL,
-            temperature=float(LLM_TEMPERATURE),
+            model=llm_model,
+            temperature=float(llm_temperature),
             api_key=DEEPSEEK_API_KEY,
             base_url=DEEPSEEK_API_URL
         )
 
-    elif LLM_PROVIDER == "ollama":
+    elif current_provider == "ollama":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
-            model=LLM_MODEL,
-            temperature=float(LLM_TEMPERATURE),
+            model=llm_model,
+            temperature=float(llm_temperature),
             api_key=OLLAMA_API_KEY,
             base_url=OLLAMA_API_URL
         )
 
-    elif LLM_PROVIDER == "kimi":
+    elif current_provider == "kimi":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
-            model=LLM_MODEL,
-            temperature=float(LLM_TEMPERATURE),
+            model=llm_model,
+            temperature=float(llm_temperature),
             api_key=KIMI_API_KEY,
             base_url=KIMI_API_URL
         )
 
-    raise ValueError(f"Unsupported LLM provider: {LLM_PROVIDER}")
+    raise ValueError(f"Unsupported LLM provider: {current_provider}")
 
 
 @lru_cache(maxsize=10)
