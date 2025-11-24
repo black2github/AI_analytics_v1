@@ -2,17 +2,20 @@
 
 from typing import Optional, List
 from langchain_core.documents import Document
-from app.config import UNIFIED_STORAGE_NAME, CHUNK_SIZE
+from app.config import UNIFIED_STORAGE_NAME, CHUNK_SIZE, IS_SERVICE_DOCS_CONTEXT, IS_PLATFORM_DOCS_CONTEXT, \
+    IS_ENTITY_NAMES_CONTEXT, IS_SERVICE_LINKS_CONTEXT
 from app.confluence_loader import get_page_content_by_id
 from app.embedding_store import get_vectorstore
 from app.llm_interface import get_embeddings_model
 from app.rag_pipeline import logger, _extract_links_from_unconfirmed_fragments, \
     _get_approved_content_cached
+from app.utils.get_env import get_bool_env
 from app.utils.tokens_budget_utils import count_tokens
 from app.semantic_search import extract_entity_names_from_requirements, unified_search_by_entity_title, \
     extract_entity_attribute_queries, extract_key_queries
 from app.service_registry import get_platform_services
 from app.services.template_type_analysis import get_template_name_by_type
+import os
 
 
 def build_context(service_code: str, requirements_text: str = "", exclude_page_ids: Optional[List[str]] = None):
@@ -152,155 +155,160 @@ def build_context_optimized(
     #
     # 1. ТОЧНЫЕ СОВПАДЕНИЯ (высший приоритет)
     #
-    entity_names = extract_entity_names_from_requirements(requirements_text)
-    if entity_names and len(context_docs) < MAX_DOCS_TOTAL:
-        exact_docs = unified_search_by_entity_title(
-            entity_names, service_code, exclude_page_ids, embeddings_model
-        )
+    if get_bool_env("IS_ENTITY_NAMES_CONTEXT"):
+        entity_names = extract_entity_names_from_requirements(requirements_text)
+        if entity_names and len(context_docs) < MAX_DOCS_TOTAL:
+            exact_docs = unified_search_by_entity_title(
+                entity_names, service_code, exclude_page_ids, embeddings_model
+            )
 
-        # Ограничиваем количество точных совпадений
-        max_exact = min(8, MAX_DOCS_TOTAL - len(context_docs))
-        exact_docs = exact_docs[:max_exact]
+            # Ограничиваем количество точных совпадений
+            max_exact = min(8, MAX_DOCS_TOTAL - len(context_docs))
+            exact_docs = exact_docs[:max_exact]
 
-        for doc in exact_docs:
-            tokens = count_tokens_with_header(doc)
-
-            # Если документ слишком большой - обрезаем или пропускаем
-            if tokens > MAX_TOKENS_TOTAL * 0.3:  # Один документ не должен занимать >30% контекста
-                logger.warning(
-                    "[build_context_optimized] Doc %s too large (%d tokens), truncating to 30%% of budget",
-                    doc.metadata.get('page_id'), tokens
-                )
-                max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.3)
-                doc = _truncate_document(doc, max_doc_tokens)
+            for doc in exact_docs:
                 tokens = count_tokens_with_header(doc)
 
-            if current_tokens + tokens < MAX_TOKENS_TOTAL:
-                context_docs.append(doc)
-                current_tokens += tokens
-                logger.debug(
-                    "[build_context_optimized] Added exact match: %s (%d tokens, total: %d/%d)",
-                    doc.metadata.get('page_id'), tokens, current_tokens, MAX_TOKENS_TOTAL
-                )
-            else:
-                logger.info("[build_context_optimized] Token limit reached at exact matches")
-                break
+                # Если документ слишком большой - обрезаем или пропускаем
+                if tokens > MAX_TOKENS_TOTAL * 0.3:  # Один документ не должен занимать >30% контекста
+                    logger.warning(
+                        "[build_context_optimized] Doc %s too large (%d tokens), truncating to 30%% of budget",
+                        doc.metadata.get('page_id'), tokens
+                    )
+                    max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.3)
+                    doc = _truncate_document(doc, max_doc_tokens)
+                    tokens = count_tokens_with_header(doc)
 
-    logger.info("[build_context_optimized] Step 1: %d exact docs, %d tokens used",
-                len(context_docs), current_tokens)
+                if current_tokens + tokens < MAX_TOKENS_TOTAL:
+                    context_docs.append(doc)
+                    current_tokens += tokens
+                    logger.debug(
+                        "[build_context_optimized] Added exact match: %s (%d tokens, total: %d/%d)",
+                        doc.metadata.get('page_id'), tokens, current_tokens, MAX_TOKENS_TOTAL
+                    )
+                else:
+                    logger.info("[build_context_optimized] Token limit reached at exact matches")
+                    break
+
+        logger.info("[build_context_optimized] Step 1: %d exact docs, %d tokens used",
+                    len(context_docs), current_tokens)
 
     # #
-    # # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место) - ЗАКОММЕНТИРОВАНО
+    # # 2. СЕРВИСНЫЕ ДОКУМЕНТЫ (если еще есть место)
     # #
-    # if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
-    #     search_queries = _prepare_search_queries(requirements_text)
-    #     entity_queries = extract_entity_attribute_queries(requirements_text)
-    #     regular_queries = [q for q in search_queries if q not in entity_queries]
+    # if get_bool_env("IS_SERVICE_DOCS_CONTEXT"):
+    #     if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
+    #         search_queries = _prepare_search_queries(requirements_text)
+    #         entity_queries = extract_entity_attribute_queries(requirements_text)
+    #         regular_queries = [q for q in search_queries if q not in entity_queries]
     #
-    #     service_docs = unified_service_search(
-    #         queries=regular_queries,
-    #         service_code=service_code,
-    #         exclude_page_ids=exclude_page_ids,
-    #         k_per_query=2,
-    #         embeddings_model=embeddings_model
-    #     )
+    #         service_docs = unified_service_search(
+    #             queries=regular_queries,
+    #             service_code=service_code,
+    #             exclude_page_ids=exclude_page_ids,
+    #             k_per_query=2,
+    #             embeddings_model=embeddings_model
+    #         )
     #
-    #     # Дедупликация с уже найденными
-    #     service_docs = _deduplicate_with_existing(service_docs, context_docs)
+    #         # Дедупликация с уже найденными
+    #         service_docs = _deduplicate_with_existing(service_docs, context_docs)
     #
-    #     # Ограничиваем количество
-    #     max_service = min(5, MAX_DOCS_TOTAL - len(context_docs))
-    #     service_docs = service_docs[:max_service]
+    #         # Ограничиваем количество
+    #         max_service = min(5, MAX_DOCS_TOTAL - len(context_docs))
+    #         service_docs = service_docs[:max_service]
     #
-    #     for doc in service_docs:
-    #         tokens = count_tokens_with_header(doc)
-    #
-    #         # Обрезаем большие документы
-    #         if tokens > MAX_TOKENS_TOTAL * 0.25:
-    #             max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.25)
-    #             doc = _truncate_document(doc, max_doc_tokens)
+    #         for doc in service_docs:
     #             tokens = count_tokens_with_header(doc)
     #
-    #         if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
-    #             context_docs.append(doc)
-    #             current_tokens += tokens
-    #             logger.debug(
-    #                 "[build_context_optimized] Added service doc: %s (%d tokens, total: %d/%d)",
-    #                 doc.metadata.get('page_id'), tokens, current_tokens, MAX_TOKENS_TOTAL
-    #             )
-    #         else:
-    #             logger.info("[build_context_optimized] Limit reached at service docs")
-    #             break
+    #             # Обрезаем большие документы
+    #             if tokens > MAX_TOKENS_TOTAL * 0.25:
+    #                 max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.25)
+    #                 doc = _truncate_document(doc, max_doc_tokens)
+    #                 tokens = count_tokens_with_header(doc)
     #
-    # logger.info("[build_context_optimized] Step 2: %d total docs, %d tokens used",
-    #             len(context_docs), current_tokens)
+    #             if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
+    #                 context_docs.append(doc)
+    #                 current_tokens += tokens
+    #                 logger.debug(
+    #                     "[build_context_optimized] Added service doc: %s (%d tokens, total: %d/%d)",
+    #                     doc.metadata.get('page_id'), tokens, current_tokens, MAX_TOKENS_TOTAL
+    #                 )
+    #             else:
+    #                 logger.info("[build_context_optimized] Limit reached at service docs")
+    #                 break
+    #
+    #     logger.info("[build_context_optimized] Step 2: %d total docs, %d tokens used",
+    #                 len(context_docs), current_tokens)
     #
     # #
-    # # 3. ПЛАТФОРМЕННЫЕ ДОКУМЕНТЫ (если еще есть место) - ЗАКОММЕНТИРОВАНО
+    # # 3. ПЛАТФОРМЕННЫЕ ДОКУМЕНТЫ (если еще есть место)
     # #
-    # if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
-    #     platform_docs = unified_platform_search(
-    #         queries=regular_queries,
-    #         exclude_page_ids=exclude_page_ids,
-    #         k_per_query=1,
-    #         embeddings_model=embeddings_model,
-    #         exclude_services=["dataModel"]
-    #     )
+    # if get_bool_env("IS_PLATFORM_DOCS_CONTEXT"):
+    #     if len(context_docs) < MAX_DOCS_TOTAL and current_tokens < MAX_TOKENS_TOTAL:
+    #         platform_docs = unified_platform_search(
+    #             # TODO regular_queries устанавливается только в предыдущем шаге и без него - сломается.
+    #             queries=regular_queries,
+    #             exclude_page_ids=exclude_page_ids,
+    #             k_per_query=1,
+    #             embeddings_model=embeddings_model,
+    #             exclude_services=["dataModel"]
+    #         )
     #
-    #     platform_docs = _deduplicate_with_existing(platform_docs, context_docs)
+    #         platform_docs = _deduplicate_with_existing(platform_docs, context_docs)
     #
-    #     for doc in platform_docs:
-    #         tokens = count_tokens_with_header(doc)
-    #
-    #         if tokens > MAX_TOKENS_TOTAL * 0.20:
-    #             max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.20)
-    #             doc = _truncate_document(doc, max_doc_tokens)
+    #         for doc in platform_docs:
     #             tokens = count_tokens_with_header(doc)
     #
-    #         if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
-    #             context_docs.append(doc)
-    #             current_tokens += tokens
-    #             logger.debug(
-    #                 "[build_context_optimized] Added platform doc: %s (%d tokens, total: %d/%d)",
-    #                 doc.metadata.get('page_id'), tokens, current_tokens, MAX_TOKENS_TOTAL
-    #             )
-    #         else:
-    #             logger.info("[build_context_optimized] Limit reached at platform docs")
-    #             break
+    #             if tokens > MAX_TOKENS_TOTAL * 0.20:
+    #                 max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.20)
+    #                 doc = _truncate_document(doc, max_doc_tokens)
+    #                 tokens = count_tokens_with_header(doc)
     #
-    # logger.info("[build_context_optimized] Step 3: %d total docs, %d tokens used",
-    #             len(context_docs), current_tokens)
+    #             if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
+    #                 context_docs.append(doc)
+    #                 current_tokens += tokens
+    #                 logger.debug(
+    #                     "[build_context_optimized] Added platform doc: %s (%d tokens, total: %d/%d)",
+    #                     doc.metadata.get('page_id'), tokens, current_tokens, MAX_TOKENS_TOTAL
+    #                 )
+    #             else:
+    #                 logger.info("[build_context_optimized] Limit reached at platform docs")
+    #                 break
+    #
+    #     logger.info("[build_context_optimized] Step 3: %d total docs, %d tokens used",
+    #                 len(context_docs), current_tokens)
 
     #
     # 4. СВЯЗАННЫЕ ДОКУМЕНТЫ (только если совсем мало контекста)
     #
-    if len(context_docs) < 5 and exclude_page_ids:
-        linked_docs = _extract_linked_context_optimized(exclude_page_ids)
-        linked_docs = _deduplicate_with_existing(linked_docs, context_docs)
+    if get_bool_env("IS_SERVICE_LINKS_CONTEXT"):
+        if len(context_docs) < 5 and exclude_page_ids:
+            linked_docs = _extract_linked_context_optimized(exclude_page_ids)
+            linked_docs = _deduplicate_with_existing(linked_docs, context_docs)
 
-        for doc in linked_docs:
-            tokens = count_tokens_with_header(doc)
-
-            if tokens > MAX_TOKENS_TOTAL * 0.15:
-                max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.15)
-                doc = _truncate_document(doc, max_doc_tokens)
+            for doc in linked_docs:
                 tokens = count_tokens_with_header(doc)
 
-            if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
-                context_docs.append(doc)
-                current_tokens += tokens
-            else:
-                break
+                if tokens > MAX_TOKENS_TOTAL * 0.15:
+                    max_doc_tokens = int(MAX_TOKENS_TOTAL * 0.15)
+                    doc = _truncate_document(doc, max_doc_tokens)
+                    tokens = count_tokens_with_header(doc)
 
-    logger.info("[build_context_optimized] Step 4: %d total docs, %d tokens used",
-                len(context_docs), current_tokens)
+                if current_tokens + tokens < MAX_TOKENS_TOTAL and len(context_docs) < MAX_DOCS_TOTAL:
+                    context_docs.append(doc)
+                    current_tokens += tokens
+                else:
+                    break
+
+        logger.info("[build_context_optimized] Step 4: %d total docs, %d tokens used",
+                    len(context_docs), current_tokens)
 
     # Формируем финальный контекст
     context = _build_final_context(context_docs)
     final_tokens = count_tokens(context)
 
     # Собираем page_id и titles всех документов для логирования
-    doc_page_ids = [doc.metadata.get('page_id', 'unknown') for doc in context_docs]
+    # doc_page_ids = [doc.metadata.get('page_id', 'unknown') for doc in context_docs]
     titles = [doc.metadata.get('title', 'Без названия') for doc in context_docs]
 
     logger.info(
