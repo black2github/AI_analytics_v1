@@ -46,32 +46,6 @@ class ServiceSummaryService:
 Будь кратким, но информативным. Избегай технических деталей реализации.
 """
 
-    # DEFAULT_PROMPT = """
-    # Ты - эксперт по архитектуре банковских систем.
-    #
-    # На основе анализа требований к микросервису создай краткое, структурированное описание его назначения.
-    #
-    # ТРЕБОВАНИЯ СЕРВИСА:
-    # {requirements}
-    #
-    # ЗАДАЧА:
-    # Проанализируй все требования и создай краткое описание сервиса (не более 300 слов), которое должно включать:
-    #
-    # 1. ## НАЗНАЧЕНИЕ СЕРВИСА: Основная цель и функциональное предназначение в банковской системе
-    # 2. ## КЛЮЧЕВЫЕ ВОЗМОЖНОСТИ: 3-5 главных функций или процессов, которые реализует сервис
-    # 3. ## ИНТЕГРАЦИИ: С какими другими сервисами или системами взаимодействует
-    # 4. ## БИЗНЕС-ЦЕННОСТЬ: Какие бизнес-задачи решает для банка и клиентов
-    #
-    # ТРЕБОВАНИЯ К ОТВЕТУ:
-    # - Используй профессиональный банковский язык
-    # - Будь конкретен и избегай общих фраз
-    # - Фокусируйся на уникальных особенностях именно этого сервиса
-    # - Структурируй ответ с помощью заголовков и списков для читаемости
-    #
-    # Будь кратким, но информативным. Избегай технических деталей реализации.
-    # Верни только описание сервиса без дополнительных комментариев.
-    #         """
-
     def __init__(self, max_tokens: int = 100000, max_pages: int = 100):
         """
         Args:
@@ -80,7 +54,8 @@ class ServiceSummaryService:
         """
         self.max_tokens = max_tokens
         self.max_pages = max_pages
-        self.llm = get_llm()
+        # ИСПРАВЛЕНО: Убрали инициализацию LLM в конструкторе
+        # self.llm = get_llm()  # <-- УДАЛЕНО!
 
     def generate_service_summary(
             self,
@@ -279,6 +254,9 @@ class ServiceSummaryService:
         """Генерирует саммари с помощью LLM"""
         logger.info("[ServiceSummaryService._generate_llm_summary] Generating summary with LLM")
 
+        # ИСПРАВЛЕНО: Получаем LLM при каждом вызове
+        llm = get_llm()
+
         prompt_template = custom_prompt or self.DEFAULT_PROMPT
 
         prompt = PromptTemplate(
@@ -286,7 +264,7 @@ class ServiceSummaryService:
             template=prompt_template
         )
 
-        chain = LLMChain(llm=self.llm, prompt=prompt)
+        chain = LLMChain(llm=llm, prompt=prompt)
 
         try:
             summary = chain.run(requirements=requirements)
