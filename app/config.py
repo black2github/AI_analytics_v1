@@ -9,10 +9,10 @@ anyio.to_thread.current_default_thread_limiter().total_tokens = 50
 
 load_dotenv()
 
-APP_VERSION = os.getenv("APP_VERSION", "0.38.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.39.0")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL")
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL")
@@ -69,3 +69,15 @@ CHUNK_MODE="none"
 CHUNK_MAX_PAGE_SIZE=3000  # символов. Максимальный размер страницы, после которого она разбивается на чанки для адаптивной стратегии
 CHUNK_SIZE=1500     # символов
 CHUNK_OVERLAP=200   # символов
+
+#
+# Настройки построения контекста
+#
+# ТОЧНЫЕ совпадения по именам сущностей по всему хранилищу
+IS_ENTITY_NAMES_CONTEXT = "True"
+# Сервисные документы
+IS_SERVICE_DOCS_CONTEXT = "False"
+# Платформенные (за исключение dataModel)
+IS_PLATFORM_DOCS_CONTEXT = "False"
+# Ссылки из требования
+IS_SERVICE_LINKS_CONTEXT = "True"
