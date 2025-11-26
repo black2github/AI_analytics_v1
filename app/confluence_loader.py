@@ -16,7 +16,8 @@ confluence = Confluence(
     url=CONFLUENCE_BASE_URL,
     username=CONFLUENCE_USER,
     password=CONFLUENCE_PASSWORD,
-    verify_ssl=False
+    # если выдвется ошибка сертификата или не проходит коннект из-за проверки - скидывай в False
+    verify_ssl=True
 )
 
 logger = logging.getLogger(__name__)
