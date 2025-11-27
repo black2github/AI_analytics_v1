@@ -36,7 +36,8 @@ def get_embedding_model(name: str = EMBEDDING_MODEL, use_offline: bool = False) 
 
     Args:
         name: Имя модели (по умолчанию из config)
-        use_offline: Если True, использует только локальный кэш без обращения к сети
+        use_offline: Если True, использует только локальный кэш без обращения к сети.
+            Устанавливает переменные окружения, которые затем читают библиотеки загрузки.
 
     Returns:
         Embeddings: Модель для создания эмбеддингов
@@ -45,7 +46,7 @@ def get_embedding_model(name: str = EMBEDDING_MODEL, use_offline: bool = False) 
 
     # ===== ШАГ 1: ПРОВЕРКА КЭША В ПАМЯТИ =====
     if _embedding_model_cache is not None:
-        logger.debug("[get_embedding_model] ✓ Returning cached model from memory")
+        logger.debug("[get_embedding_model] Returning cached model from memory")
         return _embedding_model_cache
 
     logger.info("[get_embedding_model] Starting model initialization: provider=%s, model=%s",
@@ -61,6 +62,7 @@ def get_embedding_model(name: str = EMBEDDING_MODEL, use_offline: bool = False) 
     original_transformers_offline = os.environ.get('TRANSFORMERS_OFFLINE')
     original_hf_hub_offline = os.environ.get('HF_HUB_OFFLINE')
 
+    # НАСТРОЙКА ПЕРЕМЕННЫХ ДЛЯ БИБЛИОТЕК
     if use_offline:
         logger.info("[get_embedding_model] Using OFFLINE mode - will only use local cache")
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
@@ -88,6 +90,7 @@ def get_embedding_model(name: str = EMBEDDING_MODEL, use_offline: bool = False) 
             start_time = time.time()
 
             # Создаем модель с оптимальными параметрами
+            # (библиотека читает переменные окружения и для кэширования)
             model = HuggingFaceEmbeddings(
                 model_name=EMBEDDING_MODEL,
                 model_kwargs={
@@ -155,7 +158,7 @@ def get_vectorstore(collection_name: str, embedding_model: Embeddings = None) ->
 
     if embedding_model is None:
         logger.info("[get_vectorstore] No embedding model provided, initializing default...")
-        # ВАЖНО: Используем offline режим по умолчанию для быстрой загрузки из кэша
+        # Используем offline режим по умолчанию для быстрой загрузки из кэша
         embedding_model = get_embedding_model(use_offline=True)
 
     # Проверка версии ChromaDB для совместимости
