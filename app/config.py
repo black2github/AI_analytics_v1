@@ -81,3 +81,19 @@ IS_SERVICE_DOCS_CONTEXT = "False"
 IS_PLATFORM_DOCS_CONTEXT = "False"
 # Ссылки из требования
 IS_SERVICE_LINKS_CONTEXT = "True"
+
+# TRANSFORMERS_OFFLINE=1 и HF_HUB_OFFLINE=1 - полный OFF-LINE режим
+# ЧТО ПРОИЗОЙДЕТ:
+# 1. Проверит ТОЛЬКО ~/.cache/huggingface/
+# 2. Если модель есть - загрузит мгновенно (1-3 сек)
+# 3. Если модели нет - ОШИБКА (безопасный fail)
+# 4. Никаких сетевых запросов
+#
+# Библиотека: transformers (от HuggingFace)
+# Что контролирует: Работу моделей Transformer (BERT, GPT и т.д.)
+# Эффект: Отключает онлайн-проверки конфигураций, метаданных модели, обновлений
+TRANSFORMERS_OFFLINE = os.getenv("TRANSFORMERS_OFFLINE",1)
+# Библиотека: huggingface_hub (базовая библиотека для работы с Hub)
+# Что контролирует: Работу Hub API (поиск моделей, загрузка файлов, аутентификация)
+# Эффект: Полностью блокирует любые обращения к huggingface.co
+HF_HUB_OFFLINE = os.getenv("HF_HUB_OFFLINE", 1)
