@@ -1,7 +1,7 @@
 {
 	"info": {
-		"name": "Confluence to Analyze W5",
-		"description": "Postman коллекция для получения страниц из Confluence и передачи их на сервер AI анализа",
+		"name": "Confluence to Analyze W6",
+		"description": "Коллекция для получения страниц из Confluence и их анализа",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -42,10 +42,10 @@
 			"description": "ID страниц Confluence через запятую"
 		},
 		{
-			"key": "service",
+			"key": "service_code",
 			"value": "confluence",
 			"type": "string",
-			"description": "Имя сервиса для идентификации источника данных"
+			"description": "Код сервиса для идентификации источника данных"
 		},
 		{
 			"key": "collected_pages",
@@ -89,32 +89,23 @@
 							"// Получаем ID страниц из переменной",
 							"const pageIds = pm.collectionVariables.get('page_ids').split(',').map(id => id.trim());",
 							"const currentIndex = pm.collectionVariables.get('current_page_index') || 0;",
-							"const serviceName = pm.collectionVariables.get('service');",
 							"",
 							"if (pm.response.code === 200) {",
 							"    const response = pm.response.json();",
 							"    ",
-							"    // Собираем данные страницы с нужным порядком атрибутов",
+							"    // Собираем данные страницы без service_code",
 							"    const pageData = {",
 							"        page_id: response.id,",
-							"        title: response.title",
+							"        title: response.title,",
+							"        content: response.body?.storage?.value || response.body?.view?.value || ''",
 							"    };",
-							"    ",
-							"    // Добавляем service только если он установлен",
-							"    if (serviceName && serviceName.trim() !== '') {",
-							"        pageData.service = serviceName;",
-							"    }",
-							"    ",
-							"    // Добавляем content последним",
-							"    pageData.content = response.body?.storage?.value || response.body?.view?.value || '';",
 							"    ",
 							"    // Добавляем в массив собранных страниц",
 							"    let collectedPages = JSON.parse(pm.collectionVariables.get('collected_pages') || '[]');",
 							"    collectedPages.push(pageData);",
 							"    pm.collectionVariables.set('collected_pages', JSON.stringify(collectedPages));",
 							"    ",
-							"    const serviceInfo = serviceName ? `[service: ${serviceName}]` : '';",
-							"    console.log(`Собрана страница ${currentIndex + 1} из ${pageIds.length}: ${pageData.title} ${serviceInfo}`);",
+							"    console.log(`Собрана страница ${currentIndex + 1} из ${pageIds.length}: ${pageData.title}`);",
 							"    ",
 							"    // Проверяем, есть ли еще страницы для обработки",
 							"    const nextIndex = parseInt(currentIndex) + 1;",
@@ -182,14 +173,22 @@
 						"exec": [
 							"// Подготовка данных для отправки на анализ",
 							"const collectedPages = JSON.parse(pm.collectionVariables.get('collected_pages') || '[]');",
+							"const serviceCode = pm.collectionVariables.get('service_code');",
 							"",
 							"// Формируем объект для отправки",
 							"const analyzePayload = {",
 							"    pages: collectedPages",
 							"};",
 							"",
+							"// Добавляем service_code на уровень pages, только если он установлен",
+							"if (serviceCode && serviceCode.trim() !== '') {",
+							"    analyzePayload.service_code = serviceCode;",
+							"}",
+							"",
 							"pm.collectionVariables.set('analyze_payload', JSON.stringify(analyzePayload));",
-							"console.log('Подготовлено страниц для анализа:', collectedPages.length);"
+							"",
+							"const serviceInfo = serviceCode ? ` (service_code: ${serviceCode})` : '';",
+							"console.log(`Подготовлено страниц для анализа: ${collectedPages.length}${serviceInfo}`);"
 						],
 						"type": "text/javascript"
 					}
